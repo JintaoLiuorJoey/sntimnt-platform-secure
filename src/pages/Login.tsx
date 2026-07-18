@@ -13,7 +13,9 @@ const Login = () => {
         const t = setTimeout(() => setClosureBanner(false), 5000);
         return () => clearTimeout(t);
       }
-    } catch {}
+    } catch {
+      // sessionStorage may be unavailable in restricted browser contexts.
+    }
   }, []);
 
   const handleSubmit = (e: FormEvent) => {

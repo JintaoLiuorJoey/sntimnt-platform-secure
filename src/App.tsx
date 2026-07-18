@@ -20,12 +20,14 @@ import AdminInvestor from "./pages/AdminInvestor.tsx";
 import Terms from "./pages/Terms.tsx";
 import Privacy from "./pages/Privacy.tsx";
 import NotFound from "./pages/NotFound.tsx";
+import DemoModeBanner from "@/mocks/DemoModeBanner";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
+      <DemoModeBanner />
       <Toaster />
       <Sonner />
       <BrowserRouter>
