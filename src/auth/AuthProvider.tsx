@@ -1,15 +1,38 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { AuthContext, type AuthContextValue } from "@/auth/auth-context";
 import type { AuthSession, AuthStatus, UserRole } from "@/auth/auth-types";
+import { buildLoginPagePath, safeInternalReturnTo } from "@/auth/auth-navigation";
 import { endSession, fetchSession } from "@/auth/session-api";
+import { subscribeToSessionExpired } from "@/auth/session-events";
 
 interface AuthProviderProps {
   children: ReactNode;
 }
 
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export function AuthProvider({ children }: AuthProviderProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [session, setSession] = useState<AuthSession | null>(null);
+
+  const currentReturnTo = safeInternalReturnTo(
+    `${location.pathname}${location.search}${location.hash}`,
+  );
+
+  const clearExpiredSession = useCallback(() => {
+    setSession(null);
+    setStatus("anonymous");
+    navigate(buildLoginPagePath(currentReturnTo, "session-expired"), { replace: true });
+  }, [currentReturnTo, navigate]);
 
   const refreshSession = useCallback(async () => {
     setStatus("loading");
@@ -44,14 +67,51 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => subscribeToSessionExpired(clearExpiredSession), [clearExpiredSession]);
+
+  useEffect(() => {
+    if (status !== "authenticated" || !session) return;
+
+    let timerId: number | undefined;
+    let cancelled = false;
+
+    const checkExpiry = () => {
+      if (cancelled) return;
+
+      const remainingMs = Date.parse(session.expiresAt) - Date.now();
+      if (remainingMs <= 0) {
+        clearExpiredSession();
+        return;
+      }
+
+      timerId = window.setTimeout(checkExpiry, Math.min(remainingMs, MAX_TIMER_DELAY_MS));
+    };
+
+    checkExpiry();
+    return () => {
+      cancelled = true;
+      if (timerId !== undefined) window.clearTimeout(timerId);
+    };
+  }, [clearExpiredSession, session, status]);
+
   const logout = useCallback(async () => {
+    let logoutCompleted = false;
+
     try {
       await endSession();
+      logoutCompleted = true;
     } finally {
       setSession(null);
       setStatus("anonymous");
+      navigate(
+        buildLoginPagePath(
+          "/dashboard",
+          logoutCompleted ? "logged-out" : "logout-incomplete",
+        ),
+        { replace: true },
+      );
     }
-  }, []);
+  }, [navigate]);
 
   const value = useMemo<AuthContextValue>(() => {
     const hasRole = (role: UserRole) => session?.user.roles.includes(role) ?? false;

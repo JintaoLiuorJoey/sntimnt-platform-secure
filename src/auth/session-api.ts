@@ -58,7 +58,10 @@ export async function endSession(): Promise<void> {
     method: "POST",
     credentials: "include",
     cache: "no-store",
-    headers: { Accept: "application/json" },
+    headers: {
+      Accept: "application/json",
+      "X-Requested-With": "XMLHttpRequest",
+    },
   });
 
   if (!response.ok && response.status !== 401) {

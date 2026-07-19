@@ -1,3 +1,4 @@
+import { notifySessionExpired } from "@/auth/session-events";
 import { runtimeConfig } from "@/config/runtime";
 
 export class ApiError extends Error {
@@ -10,11 +11,19 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export interface ApiRequestOptions extends RequestInit {
+  auth?: "required" | "optional";
+}
+
+export async function apiRequest<T>(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<T> {
   if (!runtimeConfig.isApi) {
     throw new Error("The production API client cannot be used while mock data is active.");
   }
 
+  const { auth = "required", ...init } = options;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const response = await fetch(`${runtimeConfig.apiBaseUrl}${normalizedPath}`, {
     ...init,
@@ -25,6 +34,10 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       ...init.headers,
     },
   });
+
+  if (response.status === 401 && auth === "required") {
+    notifySessionExpired();
+  }
 
   if (!response.ok) {
     throw new ApiError(`API request failed with status ${response.status}.`, response.status);

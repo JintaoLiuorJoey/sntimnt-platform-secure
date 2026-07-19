@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { BarChart3, LineChart, ListOrdered, User as UserIcon, LogOut } from "lucide-react";
 import { useAuth } from "@/auth/auth-context";
 
@@ -16,12 +16,10 @@ interface AppShellProps {
 
 const AppShell = ({ children }: AppShellProps) => {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
   const { user, logout } = useAuth();
 
   const handleLogout = async () => {
     await logout().catch(() => undefined);
-    navigate("/login", { replace: true });
   };
 
   return (

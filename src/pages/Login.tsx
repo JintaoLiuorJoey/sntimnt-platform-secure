@@ -1,19 +1,25 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import {
+  buildLoginEndpoint,
+  loginNoticeFor,
+  safeInternalReturnTo,
+} from "@/auth/auth-navigation";
 import { runtimeConfig } from "@/config/runtime";
 
-function safeReturnTo(value: string | null): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return "/dashboard";
-  }
-
-  return value;
-}
+const LOGIN_SUBMIT_COOLDOWN_MS = 3_000;
 
 const Login = () => {
   const location = useLocation();
+  const nextAllowedAttemptAt = useRef(0);
   const [closureBanner, setClosureBanner] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    setAuthMessage(loginNoticeFor(params.get("reason") ?? params.get("error")));
+  }, [location.search]);
 
   useEffect(() => {
     try {
@@ -31,6 +37,14 @@ const Login = () => {
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
 
+    const now = Date.now();
+    if (now < nextAllowedAttemptAt.current) {
+      setAuthMessage("Please wait a moment before trying sign-in again.");
+      return;
+    }
+
+    nextAllowedAttemptAt.current = now + LOGIN_SUBMIT_COOLDOWN_MS;
+
     if (!runtimeConfig.isApi) {
       setAuthMessage(
         "Secure authentication is not connected in demo mode. No local account or role will be created.",
@@ -38,10 +52,12 @@ const Login = () => {
       return;
     }
 
+    setIsSubmitting(true);
+    setAuthMessage(null);
+
     const params = new URLSearchParams(location.search);
-    const returnTo = safeReturnTo(params.get("returnTo"));
-    const loginUrl = `${runtimeConfig.apiBaseUrl}/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
-    window.location.assign(loginUrl);
+    const returnTo = safeInternalReturnTo(params.get("returnTo"));
+    window.location.assign(buildLoginEndpoint(runtimeConfig.apiBaseUrl, returnTo));
   };
 
   return (
@@ -80,9 +96,10 @@ const Login = () => {
 
             <button
               type="submit"
-              className="w-full h-12 rounded-lg bg-midnight text-clarity font-bold text-sm tracking-brand hover:bg-midnight/90 transition-colors"
+              disabled={isSubmitting}
+              className="w-full h-12 rounded-lg bg-midnight text-clarity font-bold text-sm tracking-brand hover:bg-midnight/90 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Continue to secure sign in
+              {isSubmitting ? "Redirecting securely…" : "Continue to secure sign in"}
             </button>
           </form>
 

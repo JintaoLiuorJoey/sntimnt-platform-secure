@@ -1,5 +1,4 @@
 import { ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
 import { LayoutGrid, ClipboardList, Users, Activity, LogOut } from "lucide-react";
 import { useAuth } from "@/auth/auth-context";
 
@@ -19,12 +18,10 @@ const navItems: { key: AdminNavKey; label: string; icon: typeof LayoutGrid }[] =
 ];
 
 const AdminShell = ({ active, onNavigate, children }: AdminShellProps) => {
-  const navigate = useNavigate();
   const { user, logout } = useAuth();
 
   const handleLogout = async () => {
     await logout().catch(() => undefined);
-    navigate("/login", { replace: true });
   };
 
   return (
