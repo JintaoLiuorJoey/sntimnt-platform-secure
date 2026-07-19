@@ -1,7 +1,7 @@
 export type DataSource = "mock" | "api";
 
 const mode = import.meta.env.MODE;
-const mockAllowed = mode === "development" || mode === "demo";
+const mockAllowed = mode === "development" || mode === "demo" || mode === "test";
 const requestedDataSource = import.meta.env.VITE_DATA_SOURCE?.trim().toLowerCase();
 const dataSource = (requestedDataSource || (mockAllowed ? "mock" : "api")) as DataSource;
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() ?? "";
