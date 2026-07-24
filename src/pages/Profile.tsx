@@ -151,7 +151,9 @@ const Profile = () => {
     const t = setTimeout(() => {
       try {
         sessionStorage.setItem("closureBanner", "1");
-      } catch {}
+      } catch {
+        // Continue logout flow even when sessionStorage is unavailable.
+      }
       navigate("/login");
     }, 3000);
     return () => clearTimeout(t);

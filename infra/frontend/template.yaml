@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Private S3 and CloudFront entry point for the SNTIMNT React SPA.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedPattern: "^[a-z0-9-]+$"
+    Description: Short environment name used in resource names and tags.
+
+  ApiOriginDomainName:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional API Gateway hostname only, without scheme or path. Leave empty
+      during the first deployment and set it after the authentication stack is
+      available.
+
+Conditions:
+  HasApiOrigin: !Not [!Equals [!Ref ApiOriginDomainName, ""]]
+
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Application
+          Value: sntimnt
+
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Description: !Sub OAC for the SNTIMNT ${EnvironmentName} SPA bucket
+        Name: !Sub sntimnt-${EnvironmentName}-spa-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SpaRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      AutoPublish: true
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+
+          if (uri.indexOf('/api/') === 0) {
+            return request;
+          }
+
+          if (uri.endsWith('/')) {
+            request.uri = uri + 'index.html';
+            return request;
+          }
+
+          var finalSegment = uri.substring(uri.lastIndexOf('/') + 1);
+          if (finalSegment.indexOf('.') === -1) {
+            request.uri = '/index.html';
+          }
+
+          return request;
+        }
+      FunctionConfig:
+        Comment: Rewrite extensionless SPA routes without rewriting API requests
+        Runtime: cloudfront-js-2.0
+      Name: !Sub sntimnt-${EnvironmentName}-spa-rewrite
+
+  SecurityResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub sntimnt-${EnvironmentName}-security-headers
+        Comment: Security headers for the SNTIMNT SPA and same-origin API
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: >-
+              default-src 'self'; base-uri 'self'; object-src 'none';
+              frame-ancestors 'none'; form-action 'self'; script-src 'self';
+              style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;
+              font-src 'self' data:; connect-src 'self';
+              upgrade-insecure-requests
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Override: true
+            Preload: false
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Override: true
+              Value: >-
+                camera=(), microphone=(), geolocation=(), payment=(),
+                usb=(), browsing-topics=()
+
+  AuthOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub sntimnt-${EnvironmentName}-auth-origin-request
+        Comment: Forward only values required by the same-origin authentication BFF
+        CookiesConfig:
+          CookieBehavior: whitelist
+          Cookies:
+            - __Host-sntimnt_session
+            - __Host-sntimnt_csrf
+            - __Host-sntimnt_oauth
+        HeadersConfig:
+          HeaderBehavior: whitelist
+          Headers:
+            - Accept
+            - Content-Type
+            - Origin
+            - Referer
+            - X-CSRF-Token
+        QueryStringsConfig:
+          QueryStringBehavior: all
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub SNTIMNT ${EnvironmentName} SPA and authentication edge
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        Origins:
+          - DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            Id: spa-s3
+            OriginAccessControlId: !GetAtt FrontendOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - !If
+            - HasApiOrigin
+            - DomainName: !Ref ApiOriginDomainName
+              Id: auth-api
+              CustomOriginConfig:
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+                OriginSSLProtocols:
+                  - TLSv1.2
+            - !Ref AWS::NoValue
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewriteFunction.FunctionARN
+          ResponseHeadersPolicyId: !Ref SecurityResponseHeadersPolicy
+          TargetOriginId: spa-s3
+          ViewerProtocolPolicy: redirect-to-https
+        CacheBehaviors:
+          - !If
+            - HasApiOrigin
+            - AllowedMethods:
+                - DELETE
+                - GET
+                - HEAD
+                - OPTIONS
+                - PATCH
+                - POST
+                - PUT
+              CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+              CachedMethods:
+                - GET
+                - HEAD
+                - OPTIONS
+              Compress: true
+              OriginRequestPolicyId: !Ref AuthOriginRequestPolicy
+              PathPattern: /api/*
+              ResponseHeadersPolicyId: !Ref SecurityResponseHeadersPolicy
+              TargetOriginId: auth-api
+              ViewerProtocolPolicy: redirect-to-https
+            - !Ref AWS::NoValue
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Application
+          Value: sntimnt
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action:
+              - s3:GetObject
+            Resource:
+              Fn::Sub: "arn:${AWS::Partition}:s3:::${FrontendBucket}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn:
+                  Fn::Sub: >-
+                    arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+
+Outputs:
+  AppOrigin:
+    Description: HTTPS origin to use for Cognito callbacks and the application.
+    Value:
+      Fn::Sub: "https://${FrontendDistribution.DomainName}"
+
+  BucketName:
+    Description: Private S3 bucket containing the SPA files.
+    Value: !Ref FrontendBucket
+
+  DistributionId:
+    Description: CloudFront distribution ID.
+    Value: !Ref FrontendDistribution
+
+  DistributionDomainName:
+    Description: CloudFront distribution hostname.
+    Value: !GetAtt FrontendDistribution.DomainName
+
+  ApiBehaviorConfigured:
+    Description: Whether the /api/* CloudFront behavior has been configured.
+    Value: !If
+      - HasApiOrigin
+      - "true"
+      - "false"

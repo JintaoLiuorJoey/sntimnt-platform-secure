@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
 import { LayoutGrid, ClipboardList, Users, Activity, LogOut } from "lucide-react";
+import { useAuth } from "@/auth/auth-context";
 
 export type AdminNavKey = "overview" | "pending" | "investors" | "operations";
 
@@ -18,7 +18,11 @@ const navItems: { key: AdminNavKey; label: string; icon: typeof LayoutGrid }[] =
 ];
 
 const AdminShell = ({ active, onNavigate, children }: AdminShellProps) => {
-  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout().catch(() => undefined);
+  };
 
   return (
     <div className="min-h-screen bg-offwhite text-[hsl(var(--body-text))]">
@@ -60,10 +64,11 @@ const AdminShell = ({ active, onNavigate, children }: AdminShellProps) => {
         </nav>
 
         <div className="px-4 py-4 border-t border-white/10">
-          <div className="text-sm font-semibold text-white">Demo Administrator</div>
-          <div className="text-xs text-white/50 mb-3">Founder & CEO</div>
+          <div className="text-sm font-semibold text-white">{user?.displayName ?? "Administrator"}</div>
+          <div className="text-xs text-white/50 mb-3">Administrator</div>
           <button
-            onClick={() => navigate("/login")}
+            type="button"
+            onClick={() => void handleLogout()}
             className="flex items-center gap-2 text-xs text-white/60 hover:text-clarity"
           >
             <LogOut className="h-3.5 w-3.5" /> Log out

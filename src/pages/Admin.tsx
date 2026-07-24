@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminShell, { AdminNavKey } from "@/components/AdminShell";
 import { Input } from "@/components/ui/input";
@@ -9,13 +9,6 @@ import {
   regimePill,
   actionPill,
 } from "@/lib/signals";
-
-// Hardcoded admin gate (placeholder until backend roles)
-const ADMIN_EMAIL = "admin@example.invalid";
-const getCurrentUserEmail = (): string => {
-  if (typeof window === "undefined") return ADMIN_EMAIL;
-  return localStorage.getItem("currentUserEmail") || ADMIN_EMAIL;
-};
 
 interface PendingApp {
   id: string;
@@ -46,6 +39,7 @@ const initialPending: PendingApp[] = [
 ];
 
 interface Investor {
+  id: string;
   name: string;
   email: string;
   value: number;
@@ -56,10 +50,10 @@ interface Investor {
 }
 
 const investors: Investor[] = [
-  { name: "Demo Administrator", email: "admin@example.invalid", value: 124350, mtd: "+3.2%", join: "Apr 2026", depositDate: "Apr 2026", totalDeposited: 120000 },
-  { name: "Demo Investor 03", email: "investor03@example.invalid", value: 150000, mtd: "+3.1%", join: "Mar 2026", depositDate: "Mar 2026", totalDeposited: 150000 },
-  { name: "Demo Investor 04", email: "investor04@example.invalid", value: 98500, mtd: "+2.8%", join: "Mar 2026", depositDate: "Mar 2026", totalDeposited: 95000 },
-  { name: "Demo Investor 05", email: "investor05@example.invalid", value: 114400, mtd: "+3.4%", join: "Feb 2026", depositDate: "Feb 2026", totalDeposited: 110000 },
+  { id: "inv-demo-001", name: "Demo Administrator", email: "admin@example.invalid", value: 124350, mtd: "+3.2%", join: "Apr 2026", depositDate: "Apr 2026", totalDeposited: 120000 },
+  { id: "inv-demo-003", name: "Demo Investor 03", email: "investor03@example.invalid", value: 150000, mtd: "+3.1%", join: "Mar 2026", depositDate: "Mar 2026", totalDeposited: 150000 },
+  { id: "inv-demo-004", name: "Demo Investor 04", email: "investor04@example.invalid", value: 98500, mtd: "+2.8%", join: "Mar 2026", depositDate: "Mar 2026", totalDeposited: 95000 },
+  { id: "inv-demo-005", name: "Demo Investor 05", email: "investor05@example.invalid", value: 114400, mtd: "+3.4%", join: "Feb 2026", depositDate: "Feb 2026", totalDeposited: 110000 },
 ];
 
 const fmtMoney = (n: number) =>
@@ -85,14 +79,6 @@ const Admin = () => {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [pendingSearch, setPendingSearch] = useState("");
   const [investorSearch, setInvestorSearch] = useState("");
-
-  // Route protection
-  useEffect(() => {
-    const email = getCurrentUserEmail();
-    if (email !== ADMIN_EMAIL) {
-      navigate("/dashboard", { replace: true });
-    }
-  }, [navigate]);
 
   const totalAUM = useMemo(
     () => investors.reduce((acc, i) => acc + i.value, 0),
@@ -239,7 +225,7 @@ const Admin = () => {
         </thead>
         <tbody>
           {investors.map((inv) => (
-            <tr key={inv.email} className="border-b border-[#E5E5E5] last:border-b-0">
+            <tr key={inv.id} className="border-b border-[#E5E5E5] last:border-b-0">
               <Td className="font-semibold text-midnight">{inv.name}</Td>
               <Td className="text-[#3A3A3A]">{inv.email}</Td>
               <Td className="text-midnight font-medium">{fmtMoney(inv.value)}</Td>
@@ -255,7 +241,7 @@ const Admin = () => {
               <Td className="text-right">
                 <button
                   type="button"
-                  onClick={() => navigate(`/admin/investor/${encodeURIComponent(inv.email)}`)}
+                  onClick={() => navigate(`/admin/investors/${inv.id}`)}
                   className="border border-midnight text-midnight bg-white text-xs font-semibold rounded-md px-3 py-1.5 hover:bg-midnight/5 transition"
                 >
                   View

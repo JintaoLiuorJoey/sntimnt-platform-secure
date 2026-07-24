@@ -1,0 +1,9 @@
+version = 0.1
+
+[dev.deploy.parameters]
+stack_name = "sntimnt-auth-dev"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+region = "us-east-1"
+parameter_overrides = "EnvironmentName=dev AppOrigin=https://app.example.com CognitoDomainPrefix=sntimnt-dev-REPLACE-ME"

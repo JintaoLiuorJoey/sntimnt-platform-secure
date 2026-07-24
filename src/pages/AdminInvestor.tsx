@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 // Placeholder investor lookup (mirrors the list in Admin.tsx)
 const investorsData = [
   {
+    id: "inv-demo-001",
     name: "Demo Administrator",
     email: "admin@example.invalid",
     portfolioValue: 124350,
@@ -16,6 +17,7 @@ const investorsData = [
     memberSince: "April 2026",
   },
   {
+    id: "inv-demo-003",
     name: "Demo Investor 03",
     email: "investor03@example.invalid",
     portfolioValue: 150000,
@@ -24,6 +26,7 @@ const investorsData = [
     memberSince: "March 2026",
   },
   {
+    id: "inv-demo-004",
     name: "Demo Investor 04",
     email: "investor04@example.invalid",
     portfolioValue: 98500,
@@ -32,6 +35,7 @@ const investorsData = [
     memberSince: "March 2026",
   },
   {
+    id: "inv-demo-005",
     name: "Demo Investor 05",
     email: "investor05@example.invalid",
     portfolioValue: 114400,
@@ -99,13 +103,11 @@ type OpenForm =
 
 const AdminInvestor = () => {
   const navigate = useNavigate();
-  const { email } = useParams();
+  const { investorId } = useParams();
 
   const investor = useMemo(
-    () =>
-      investorsData.find((i) => i.email === decodeURIComponent(email || "")) ||
-      investorsData[0],
-    [email],
+    () => investorsData.find((item) => item.id === investorId),
+    [investorId],
   );
 
   const [deposits, setDeposits] = useState<DepositRow[]>(initialDeposits);
@@ -179,6 +181,26 @@ const AdminInvestor = () => {
   };
 
   const closeForm = () => setOpenForm({ kind: "none" });
+
+  if (!investor) {
+    return (
+      <AdminShell active="investors" onNavigate={() => navigate("/admin")}>
+        <section className="rounded-[10px] border border-[#E5E5E5] bg-white p-8">
+          <h1 className="text-xl font-bold text-midnight">Investor not found</h1>
+          <p className="mt-2 text-sm text-[#666]">
+            The requested investor identifier is invalid or no longer available.
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate("/admin")}
+            className="mt-5 rounded-md bg-midnight px-4 py-2 text-sm font-semibold text-clarity"
+          >
+            Return to investors
+          </button>
+        </section>
+      </AdminShell>
+    );
+  }
 
   return (
     <AdminShell active="investors" onNavigate={() => navigate("/admin")}>

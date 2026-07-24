@@ -79,3 +79,9 @@ lerna-debug.log*
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Local security audit reports
+npm-audit-*.json
+
+# Local lint reports
+lint-result.txt
