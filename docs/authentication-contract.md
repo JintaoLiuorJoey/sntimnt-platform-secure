@@ -44,3 +44,41 @@ The BFF and AWS edge must enforce the real limit:
 - Any authenticated API request that returns `401` emits a session-expired event.
 - Both paths clear in-memory identity and redirect to `/login` with a safe internal return path.
 - Every backend endpoint must still authenticate and authorize each request; React route guards are not a server security boundary.
+
+## Implemented BFF session flow
+
+The `backend/` package implements these endpoints behind the same CloudFront application origin:
+
+- `GET /api/auth/login` creates one-time OAuth state, nonce, a PKCE verifier, and an HttpOnly browser-binding cookie, then redirects to Cognito managed login.
+- `GET /api/auth/callback` consumes the one-time transaction, verifies the browser binding, exchanges the code with PKCE, validates the Cognito ID-token signature and claims, and creates an opaque server-side session.
+- `GET /api/auth/session` returns only the validated application user and session deadlines. Cognito tokens are not returned to React.
+- `POST /api/auth/refresh` requires the Origin and session-bound CSRF token, rotates the Cognito refresh token, opaque session ID, and CSRF token, and never extends the absolute session deadline.
+- `POST /api/auth/logout` requires CSRF protection, deletes the BFF session, revokes the Cognito refresh token, and expires all authentication cookies.
+
+The session cookie is host-only, `HttpOnly`, `Secure`, and `SameSite=Lax`. A separate host-only CSRF cookie is readable by the React application, but its SHA-256 hash is stored in the server-side session. Unsafe requests must present the exact token in the `X-CSRF-Token` header and originate from the configured application origin.
+
+## Session storage and expiry
+
+DynamoDB stores only a SHA-256-derived key for each opaque session ID. Refresh tokens and PKCE verifiers are encrypted with KMS before storage. Records have TTL attributes, but every request also checks explicit deadlines because DynamoDB TTL deletion is asynchronous.
+
+Default deadlines are:
+
+- idle timeout: 30 minutes;
+- absolute timeout: 8 hours;
+- OAuth transaction timeout: 10 minutes.
+
+The frontend sends refresh requests only when the document is visible and browser activity was recent. Successful refresh rotates session material and advances the idle deadline; it never changes the original absolute deadline. Expired, failed-refresh, and logout paths delete the BFF session and attempt Cognito token revocation.
+
+## Server-controlled authorization
+
+The BFF accepts application roles only from the signed `cognito:groups` claim and only from this allowlist:
+
+- `investor`
+- `operations`
+- `admin`
+
+A verified email and at least one allowlisted group are required. Email addresses, URL parameters, browser storage, and React state are never accepted as role evidence. Business APIs must still authenticate the opaque session and authorize the requested resource on every request.
+
+## CloudFront requirement
+
+The production value of `VITE_API_BASE_URL` is the HTTPS application origin, not a separate API origin. CloudFront must route `/api/*` to API Gateway without caching and forward cookies, query strings, and the required request headers. This preserves host-only cookie behavior and avoids weakening the CSRF model with cross-origin exceptions.

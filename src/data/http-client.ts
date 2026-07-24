@@ -1,5 +1,6 @@
 import { notifySessionExpired } from "@/auth/session-events";
 import { runtimeConfig } from "@/config/runtime";
+import { csrfHeadersForMethod } from "@/auth/csrf-cookie";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -25,12 +26,14 @@ export async function apiRequest<T>(
 
   const { auth = "required", ...init } = options;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const method = (init.method ?? "GET").toUpperCase();
   const response = await fetch(`${runtimeConfig.apiBaseUrl}${normalizedPath}`, {
     ...init,
     credentials: "include",
     headers: {
       Accept: "application/json",
       ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...csrfHeadersForMethod(method),
       ...init.headers,
     },
   });

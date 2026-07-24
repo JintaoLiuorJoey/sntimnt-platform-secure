@@ -8,6 +8,7 @@ import type { AuthSession } from "@/auth/auth-types";
 const sessionApiMocks = vi.hoisted(() => ({
   fetchSession: vi.fn(),
   endSession: vi.fn(),
+  renewSession: vi.fn(),
 }));
 
 vi.mock("@/auth/session-api", () => sessionApiMocks);
@@ -36,6 +37,7 @@ describe("AuthProvider session lifecycle", () => {
   beforeEach(() => {
     sessionApiMocks.fetchSession.mockReset();
     sessionApiMocks.endSession.mockReset();
+    sessionApiMocks.renewSession.mockReset();
   });
 
   afterEach(() => {
@@ -101,6 +103,38 @@ describe("AuthProvider session lifecycle", () => {
     expect(
       screen.getByText("/login?returnTo=%2Fdashboard&reason=logged-out"),
     ).toBeInTheDocument();
+  });
+
+  it("does not refresh an idle browser session in the background", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+    sessionApiMocks.fetchSession.mockResolvedValue({
+      ...activeSession,
+      expiresAt: "2030-01-01T01:00:00.000Z",
+      refreshAfter: "2030-01-01T00:06:00.000Z",
+    });
+    sessionApiMocks.renewSession.mockResolvedValue(activeSession);
+
+    render(
+      <MemoryRouter initialEntries={["/dashboard"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/dashboard" element={<div>Dashboard</div>} />
+            <Route path="/login" element={<LoginLocation />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(6 * 60 * 1000 + 1);
+    });
+
+    expect(sessionApiMocks.renewSession).not.toHaveBeenCalled();
   });
 
 });

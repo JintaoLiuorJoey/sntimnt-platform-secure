@@ -12,6 +12,7 @@ export const authenticatedUserSchema = z.object({
 export const authSessionSchema = z.object({
   user: authenticatedUserSchema,
   expiresAt: z.string().datetime({ offset: true }),
+  refreshAfter: z.string().datetime({ offset: true }).optional(),
 });
 
 export type UserRole = z.infer<typeof userRoleSchema>;
