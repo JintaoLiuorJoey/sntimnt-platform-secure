@@ -1,0 +1,174 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-safety:
+    name: Repository safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject generated and local files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bad_files=()
+
+          while IFS= read -r file; do
+            case "$file" in
+              .env.example|*/.env.example|samconfig.toml.example|*/samconfig.toml.example)
+                ;;
+              .env|*/.env|.env.*|*/.env.*|samconfig.toml|*/samconfig.toml)
+                bad_files+=("$file")
+                ;;
+              node_modules/*|*/node_modules/*|dist/*|*/dist/*|.aws-sam/*|*/.aws-sam/*)
+                bad_files+=("$file")
+                ;;
+            esac
+          done < <(git ls-files)
+
+          if (( ${#bad_files[@]} > 0 )); then
+            echo "::error::Generated or local files are tracked:"
+            printf ' - %s\n' "${bad_files[@]}"
+            exit 1
+          fi
+
+          echo "No generated or local deployment files are tracked."
+
+      - name: Scan high-confidence secret patterns
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pattern='AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{40,255}|sk-[A-Za-z0-9]{20,}'
+
+          if git grep -I -l -E "$pattern" -- . > secret-files.txt; then
+            echo "::error::Potential secrets were detected in these tracked files:"
+            sed 's/^/ - /' secret-files.txt
+            exit 1
+          fi
+
+          echo "No high-confidence secret patterns were detected."
+
+  frontend:
+    name: Frontend
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run lint
+        run: npm run lint -- --max-warnings=7
+
+      - name: Audit all dependencies
+        run: npm audit
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
+      - name: Build dev frontend with real API authentication
+        shell: pwsh
+        run: |
+          & .\scripts\build-dev.ps1 `
+            -AppOrigin "https://d1koeltwri1n61.cloudfront.net"
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript, tests, and bundle validation
+        run: npm run validate
+
+      - name: Audit all dependencies
+        run: npm audit
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
+  infrastructure:
+    name: Infrastructure
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Set up AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Lint backend SAM template
+        run: sam validate --lint --template-file backend/template.yaml
+
+      - name: Build backend SAM application
+        working-directory: backend
+        run: npm run sam:build
+
+      - name: Lint frontend CloudFormation template
+        run: sam validate --lint --template-file infra/frontend/template.yaml
