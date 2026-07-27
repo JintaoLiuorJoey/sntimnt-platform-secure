@@ -102,7 +102,7 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev
 
-      - name: Build dev frontend with real API authentication
+      - name: Build production-mode frontend with real API authentication
         shell: pwsh
         run: |
           & .\scripts\build-dev.ps1 `

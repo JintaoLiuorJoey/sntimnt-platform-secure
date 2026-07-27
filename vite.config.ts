@@ -17,8 +17,15 @@ const rejectMockModules = (enabled: boolean): Plugin => ({
       if (output.type !== "chunk") continue;
 
       for (const moduleId of Object.keys(output.modules)) {
-        if (normalizePath(moduleId).includes("/src/mocks/")) {
-          offenders.add(normalizePath(path.relative(process.cwd(), moduleId)));
+        const normalizedModuleId = normalizePath(moduleId);
+
+        if (
+          normalizedModuleId.includes("/src/mocks/") ||
+          normalizedModuleId.includes("/src/demo/")
+        ) {
+          offenders.add(
+            normalizePath(path.relative(process.cwd(), moduleId)),
+          );
         }
       }
     }
@@ -26,10 +33,10 @@ const rejectMockModules = (enabled: boolean): Plugin => ({
     if (offenders.size > 0) {
       this.error(
         [
-          "Protected build rejected: mock modules are present in the output.",
+          "Protected build rejected: demo or mock modules are present in the output.",
           "Replace these imports with production API-backed data before deployment:",
           ...[...offenders].sort().map((file) => `  - ${file}`),
-          "Use `npm run build:demo` only for a clearly labelled local demo artifact.",
+          "Use `npm run build:demo` only for a clearly labelled demo artifact.",
         ].join("\n"),
       );
     }
@@ -41,7 +48,8 @@ export default defineConfig(({ command, mode }) => {
   const mockAllowed = command === "serve" || mode === "demo";
   const protectedBuild = command === "build" && mode !== "demo";
   const dataSource =
-    env.VITE_DATA_SOURCE?.trim().toLowerCase() || (mockAllowed ? "mock" : "api");
+    env.VITE_DATA_SOURCE?.trim().toLowerCase() ||
+    (mockAllowed ? "mock" : "api");
 
   if (!new Set(["mock", "api"]).has(dataSource)) {
     throw new Error("VITE_DATA_SOURCE must be either `mock` or `api`.");
@@ -59,6 +67,10 @@ export default defineConfig(({ command, mode }) => {
     );
   }
 
+  const demoUiEnabled =
+    mode === "demo" ||
+    (command === "serve" && dataSource === "mock");
+
   return {
     server: {
       host: "127.0.0.1",
@@ -69,13 +81,27 @@ export default defineConfig(({ command, mode }) => {
     },
     plugins: [
       react(),
-      command === "serve" && mode === "development" && componentTagger(),
+      command === "serve" &&
+        mode === "development" &&
+        componentTagger(),
       rejectMockModules(protectedBuild),
     ].filter(Boolean),
     resolve: {
-      alias: {
-        "@": path.resolve(__dirname, "./src"),
-      },
+      alias: [
+        {
+          find: "@/demo-entry",
+          replacement: path.resolve(
+            __dirname,
+            demoUiEnabled
+              ? "./src/demo/DemoModeBanner.tsx"
+              : "./src/demo-entry.tsx",
+          ),
+        },
+        {
+          find: "@",
+          replacement: path.resolve(__dirname, "./src"),
+        },
+      ],
       dedupe: [
         "react",
         "react-dom",

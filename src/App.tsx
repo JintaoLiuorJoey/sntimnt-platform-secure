@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/auth/AuthProvider";
 import { ProtectedRoute } from "@/auth/guards/ProtectedRoute";
 import { RoleRoute } from "@/auth/guards/RoleRoute";
-import DemoModeBanner from "@/mocks/DemoModeBanner";
+import DemoModeBanner from "@/demo-entry";
 import Index from "./pages/Index.tsx";
 import Login from "./pages/Login.tsx";
 import Register from "./pages/Register.tsx";

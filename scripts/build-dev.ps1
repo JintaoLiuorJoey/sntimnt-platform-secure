@@ -12,10 +12,10 @@ try {
     $env:VITE_DATA_SOURCE = "api"
     $env:VITE_API_BASE_URL = $AppOrigin.TrimEnd("/")
 
-    Write-Host "Building demo mode with real API authentication..."
+    Write-Host "Building production mode for the dev environment..."
     Write-Host "API origin: $env:VITE_API_BASE_URL"
 
-    & npm.cmd run build:demo
+    & npm.cmd run build
 
     if ($LASTEXITCODE -ne 0) {
         throw "Frontend build failed with exit code $LASTEXITCODE."
@@ -40,20 +40,23 @@ try {
     }
 
     Write-Host ""
-    Write-Host "Dev frontend build succeeded."
+    Write-Host "Dev production-mode frontend build succeeded."
     Write-Host "Bundle: $($Bundle.Name)"
+    Write-Host "Mode: production"
     Write-Host "Data source: api"
 }
 finally {
     if ($null -eq $PreviousDataSource) {
-        Remove-Item Env:VITE_DATA_SOURCE -ErrorAction SilentlyContinue
+        Remove-Item Env:VITE_DATA_SOURCE `
+          -ErrorAction SilentlyContinue
     }
     else {
         $env:VITE_DATA_SOURCE = $PreviousDataSource
     }
 
     if ($null -eq $PreviousApiBaseUrl) {
-        Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
+        Remove-Item Env:VITE_API_BASE_URL `
+          -ErrorAction SilentlyContinue
     }
     else {
         $env:VITE_API_BASE_URL = $PreviousApiBaseUrl
