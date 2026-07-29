@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router";
 import { BarChart3, LineChart, ListOrdered, User as UserIcon, LogOut } from "lucide-react";
 import { useAuth } from "@/auth/auth-context";
 

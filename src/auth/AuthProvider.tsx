@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router";
 import { AuthContext, type AuthContextValue } from "@/auth/auth-context";
 import type { AuthSession, AuthStatus, UserRole } from "@/auth/auth-types";
 import { buildLoginPagePath, safeInternalReturnTo } from "@/auth/auth-navigation";

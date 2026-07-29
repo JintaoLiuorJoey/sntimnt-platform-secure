@@ -1,4 +1,4 @@
-import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router";
 import { useAuth } from "@/auth/auth-context";
 import type { UserRole } from "@/auth/auth-types";
 import { SessionLoading } from "@/auth/guards/SessionLoading";

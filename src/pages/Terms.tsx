@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 const LAST_UPDATED = "April 18, 2026";
 
@@ -6,7 +6,7 @@ type Section = {
   id: string;
   number: number;
   title: string;
-  body: JSX.Element;
+  body: React.ReactNode;
 };
 
 const sections: Section[] = [

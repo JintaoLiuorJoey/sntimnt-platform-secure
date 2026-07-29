@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { X } from "lucide-react";
 
 type Regime = "Bull Market" | "Transitional" | "Bear Market";
