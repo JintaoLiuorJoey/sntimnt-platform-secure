@@ -23,6 +23,11 @@ Parameters:
     Type: Number
     Default: 1800
     MinValue: 300
+  RecentAuthenticationMaxAgeSeconds:
+    Type: Number
+    Default: 300
+    MinValue: 60
+    MaxValue: 900
 
 Globals:
   Function:
@@ -46,6 +51,7 @@ Globals:
         AUTH_CALLBACK_URL: !Sub "${AppOrigin}/api/auth/callback"
         SESSION_ABSOLUTE_TTL_SECONDS: !Ref SessionAbsoluteTtlSeconds
         SESSION_IDLE_TTL_SECONDS: !Ref SessionIdleTtlSeconds
+        RECENT_AUTHENTICATION_MAX_AGE_SECONDS: !Ref RecentAuthenticationMaxAgeSeconds
         OAUTH_TRANSACTION_TTL_SECONDS: "600"
         LOGIN_RATE_LIMIT_COUNT: "20"
         LOGIN_RATE_LIMIT_WINDOW_SECONDS: "300"

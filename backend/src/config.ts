@@ -18,6 +18,29 @@ function positiveInteger(
   return value;
 }
 
+function integerInRange(
+  environment: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const raw = environment[name]?.trim();
+  const value = raw ? Number(raw) : fallback;
+
+  if (
+    !Number.isSafeInteger(value) ||
+    value < minimum ||
+    value > maximum
+  ) {
+    throw new Error(
+      `${name} must be an integer between ${minimum} and ${maximum}.`,
+    );
+  }
+
+  return value;
+}
+
 function booleanValue(
   environment: NodeJS.ProcessEnv,
   name: string,
@@ -72,6 +95,13 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
       28_800,
     ),
     idleTtlSeconds: positiveInteger(environment, "SESSION_IDLE_TTL_SECONDS", 1_800),
+    recentAuthenticationMaxAgeSeconds: integerInRange(
+      environment,
+      "RECENT_AUTHENTICATION_MAX_AGE_SECONDS",
+      300,
+      60,
+      900,
+    ),
     oauthTransactionTtlSeconds: positiveInteger(
       environment,
       "OAUTH_TRANSACTION_TTL_SECONDS",

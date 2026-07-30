@@ -67,17 +67,43 @@ export function rotateSessionRecord(input: {
   };
 }
 
-export function isSessionExpired(record: SessionRecord, now: number): boolean {
-  const authenticationTimeIsValid =
+function authenticationTimeIsValid(record: SessionRecord): boolean {
+  return (
+    Number.isSafeInteger(record.createdAt) &&
+    record.createdAt >= 0 &&
     Number.isSafeInteger(record.authenticatedAt) &&
     record.authenticatedAt >= 0 &&
-    record.authenticatedAt <= record.createdAt + 60;
+    record.authenticatedAt <= record.createdAt + 60
+  );
+}
 
+export function isSessionExpired(record: SessionRecord, now: number): boolean {
   return (
-    !authenticationTimeIsValid ||
+    !authenticationTimeIsValid(record) ||
     record.absoluteExpiresAt <= now ||
     record.idleExpiresAt <= now
   );
+}
+
+export function hasRecentAuthentication(
+  record: SessionRecord,
+  now: number,
+  maxAgeSeconds: number,
+): boolean {
+  if (
+    !authenticationTimeIsValid(record) ||
+    !Number.isSafeInteger(now) ||
+    now < 0 ||
+    !Number.isSafeInteger(maxAgeSeconds) ||
+    maxAgeSeconds <= 0 ||
+    record.createdAt > now + 60 ||
+    record.authenticatedAt > now + 60
+  ) {
+    return false;
+  }
+
+  const authenticationAge = now - Math.min(record.authenticatedAt, now);
+  return authenticationAge <= maxAgeSeconds;
 }
 
 export function effectiveExpiresAt(record: SessionRecord): number {

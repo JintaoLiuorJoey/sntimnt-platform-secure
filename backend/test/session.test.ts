@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AuthConfig } from "../src/config.js";
 import {
   createSessionRecord,
+  hasRecentAuthentication,
   isSessionExpired,
   publicSession,
   rotateSessionRecord,
@@ -19,6 +20,22 @@ const user = {
   displayName: "Investor",
   roles: ["investor" as const],
 };
+
+function storedSession(authenticatedAt = 900): SessionRecord {
+  return {
+    ...createSessionRecord({
+      config,
+      now: 1_000,
+      user,
+      subject: "user-1",
+      authenticatedAt,
+      refreshTokenCiphertext: "ciphertext",
+      csrfHash: "hash",
+      tokenExpiresAt: 4_600,
+    }),
+    pk: "pk",
+  };
+}
 
 describe("server-side session lifecycle", () => {
   it("enforces separate absolute and idle deadlines", () => {
@@ -122,6 +139,41 @@ describe("server-side session lifecycle", () => {
     expect(rotated.authenticatedAt).toBe(existing.authenticatedAt);
     expect(rotated.refreshTokenCiphertext).toBe("new");
   });
+
+  it("accepts recent authentication within and at the policy boundary", () => {
+    const record = storedSession();
+
+    expect(hasRecentAuthentication(record, 1_199, 300)).toBe(true);
+    expect(hasRecentAuthentication(record, 1_200, 300)).toBe(true);
+  });
+
+  it("rejects authentication older than the policy window", () => {
+    expect(hasRecentAuthentication(storedSession(), 1_201, 300)).toBe(
+      false,
+    );
+  });
+
+  it("permits limited clock skew without accepting excessive future time", () => {
+    expect(
+      hasRecentAuthentication(storedSession(1_050), 1_000, 300),
+    ).toBe(true);
+
+    expect(
+      hasRecentAuthentication(storedSession(1_061), 1_000, 300),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["zero", 0],
+    ["fractional", 300.5],
+  ])(
+    "rejects a recent-authentication policy window that is %s",
+    (_description, maxAgeSeconds) => {
+      expect(
+        hasRecentAuthentication(storedSession(), 1_100, maxAgeSeconds),
+      ).toBe(false);
+    },
+  );
 
   it("returns only public identity and timing data", () => {
     const record = {
