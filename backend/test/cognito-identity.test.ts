@@ -29,9 +29,48 @@ describe("Cognito identity mapping", () => {
     );
   });
 
-  it("requires a verified email", () => {
-    expect(() => identityFromClaims(payload({ email_verified: false }))).toThrow(
+  it("rejects a missing email verification claim", () => {
+    const claims = payload();
+    delete claims.email_verified;
+
+    expect(() => identityFromClaims(claims)).toThrow("verified email");
+  });
+
+  it.each([
+    ["false", false],
+    ['the string "true"', "true"],
+    ["the number 1", 1],
+  ])(
+    "rejects email verification when it is %s",
+    (_description, emailVerified) => {
+      expect(() =>
+        identityFromClaims(payload({ email_verified: emailVerified })),
+      ).toThrow("verified email");
+    },
+  );
+
+  it("rejects a missing email claim", () => {
+    const claims = payload();
+    delete claims.email;
+
+    expect(() => identityFromClaims(claims)).toThrow("verified email");
+  });
+
+  it.each([
+    ["empty", ""],
+    ["whitespace-only", "   "],
+    ["non-string", 123],
+  ])("rejects an email claim that is %s", (_description, email) => {
+    expect(() => identityFromClaims(payload({ email }))).toThrow(
       "verified email",
     );
+  });
+
+  it("trims surrounding email whitespace before creating the identity", () => {
+    const identity = identityFromClaims(
+      payload({ email: " investor@example.com " }),
+    );
+
+    expect(identity.user.email).toBe("investor@example.com");
   });
 });

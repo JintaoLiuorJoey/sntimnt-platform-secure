@@ -19,7 +19,7 @@ export interface VerifiedIdentity {
 }
 
 export function identityFromClaims(payload: IdTokenClaims): VerifiedIdentity {
-  const email = typeof payload.email === "string" ? payload.email : "";
+  const email = typeof payload.email === "string" ? payload.email.trim() : "";
   if (!email || payload.email_verified !== true) {
     throw new Error("A verified email address is required.");
   }
