@@ -26,6 +26,7 @@ export interface SessionRecord {
   refreshTokenCiphertext: string;
   csrfHash: string;
   subject: string;
+  authenticatedAt: number;
   createdAt: number;
   lastSeenAt: number;
   absoluteExpiresAt: number;

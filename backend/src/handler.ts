@@ -138,6 +138,7 @@ async function handleCallback(event: APIGatewayProxyEventV2) {
       now,
       user: identity.user,
       subject: identity.subject,
+      authenticatedAt: identity.authenticatedAt,
       refreshTokenCiphertext,
       csrfHash: sha256(csrfToken),
       tokenExpiresAt: identity.tokenExpiresAt,

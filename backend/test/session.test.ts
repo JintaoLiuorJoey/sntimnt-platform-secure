@@ -27,6 +27,7 @@ describe("server-side session lifecycle", () => {
       now: 1_000,
       user,
       subject: "user-1",
+      authenticatedAt: 900,
       refreshTokenCiphertext: "ciphertext",
       csrfHash: "hash",
       tokenExpiresAt: 4_600,
@@ -34,9 +35,62 @@ describe("server-side session lifecycle", () => {
 
     expect(record.absoluteExpiresAt).toBe(29_800);
     expect(record.idleExpiresAt).toBe(2_800);
+    expect(record.authenticatedAt).toBe(900);
     expect(isSessionExpired({ ...record, pk: "pk" }, 2_799)).toBe(false);
     expect(isSessionExpired({ ...record, pk: "pk" }, 2_800)).toBe(true);
   });
+
+  it("fails closed for a legacy session without authentication time", () => {
+    const record = {
+      ...createSessionRecord({
+        config,
+        now: 1_000,
+        user,
+        subject: "user-1",
+        authenticatedAt: 900,
+        refreshTokenCiphertext: "ciphertext",
+        csrfHash: "hash",
+        tokenExpiresAt: 4_600,
+      }),
+      pk: "pk",
+    } satisfies SessionRecord;
+
+    const legacyRecord: Partial<SessionRecord> = { ...record };
+    delete legacyRecord.authenticatedAt;
+
+    expect(isSessionExpired(legacyRecord as SessionRecord, 1_001)).toBe(true);
+  });
+
+  it.each([
+    ["a string", "900"],
+    ["a fractional number", 900.5],
+    ["a negative number", -1],
+    ["later than the permitted clock skew", 1_061],
+  ])(
+    "fails closed for an invalid stored authentication time that is %s",
+    (_description, authenticatedAt) => {
+      const record = {
+        ...createSessionRecord({
+          config,
+          now: 1_000,
+          user,
+          subject: "user-1",
+          authenticatedAt: 900,
+          refreshTokenCiphertext: "ciphertext",
+          csrfHash: "hash",
+          tokenExpiresAt: 4_600,
+        }),
+        pk: "pk",
+      } satisfies SessionRecord;
+
+      expect(
+        isSessionExpired(
+          { ...record, authenticatedAt } as SessionRecord,
+          1_001,
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("rotates session state without extending the absolute timeout", () => {
     const existing = {
@@ -45,6 +99,7 @@ describe("server-side session lifecycle", () => {
         now: 1_000,
         user,
         subject: "user-1",
+        authenticatedAt: 900,
         refreshTokenCiphertext: "old",
         csrfHash: "old-hash",
         tokenExpiresAt: 4_600,
@@ -64,6 +119,7 @@ describe("server-side session lifecycle", () => {
 
     expect(rotated.absoluteExpiresAt).toBe(existing.absoluteExpiresAt);
     expect(rotated.idleExpiresAt).toBe(3_800);
+    expect(rotated.authenticatedAt).toBe(existing.authenticatedAt);
     expect(rotated.refreshTokenCiphertext).toBe("new");
   });
 
@@ -74,6 +130,7 @@ describe("server-side session lifecycle", () => {
         now: 1_000,
         user,
         subject: "user-1",
+        authenticatedAt: 900,
         refreshTokenCiphertext: "secret-token",
         csrfHash: "secret-hash",
         tokenExpiresAt: 4_600,
@@ -82,7 +139,9 @@ describe("server-side session lifecycle", () => {
     } satisfies SessionRecord;
 
     const response = publicSession(record, 1_000);
+
     expect(response.user).toEqual(user);
+    expect(response).not.toHaveProperty("authenticatedAt");
     expect(response).not.toHaveProperty("refreshTokenCiphertext");
     expect(response).not.toHaveProperty("csrfHash");
   });

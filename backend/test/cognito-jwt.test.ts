@@ -35,6 +35,7 @@ function token(overrides: Record<string, unknown> = {}): string {
       aud: clientId,
       token_use: "id",
       nonce: "nonce-123",
+      auth_time: now,
       iat: now,
       exp: now + 3600,
       ...overrides,
@@ -72,6 +73,16 @@ describe("Cognito ID token verification", () => {
     );
     expect(identity.user.roles).toEqual(["investor"]);
     expect(identity.subject).toBe("user-123");
+    expect(identity.authenticatedAt).toBeGreaterThan(0);
+  });
+
+  it("rejects a signed token without authentication time", async () => {
+    await expect(
+      new CognitoService(config).verifyIdentity(
+        token({ auth_time: undefined }),
+        "nonce-123",
+      ),
+    ).rejects.toThrow("authentication time");
   });
 
   it("rejects a token for another app client", async () => {

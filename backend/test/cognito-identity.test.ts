@@ -23,6 +23,34 @@ describe("Cognito identity mapping", () => {
     expect(identityFromClaims(payload()).user.roles).toEqual(["investor"]);
   });
 
+  it("maps the original authentication time", () => {
+    expect(identityFromClaims(payload()).authenticatedAt).toBe(1_999_996_400);
+  });
+
+  it("rejects a missing authentication time", () => {
+    const claims = payload();
+    delete claims.auth_time;
+
+    expect(() => identityFromClaims(claims)).toThrow("authentication time");
+  });
+
+  it.each([
+    ["a string", "1999996400"],
+    ["a fractional number", 1_999_996_400.5],
+    ["a negative number", -1],
+    ["later than token issuance", 1_999_996_401],
+  ])("rejects an authentication time that is %s", (_description, authTime) => {
+    expect(() => identityFromClaims(payload({ auth_time: authTime }))).toThrow(
+      "authentication time",
+    );
+  });
+
+  it("rejects authentication time when token issue time is malformed", () => {
+    expect(() =>
+      identityFromClaims(payload({ iat: "1999996400" })),
+    ).toThrow("authentication time");
+  });
+
   it("fails closed when the user has no application group", () => {
     expect(() => identityFromClaims(payload({ "cognito:groups": ["unknown"] }))).toThrow(
       "not assigned",

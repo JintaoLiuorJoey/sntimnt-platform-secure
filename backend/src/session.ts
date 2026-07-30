@@ -10,6 +10,7 @@ export function createSessionRecord(input: {
   now: number;
   user: AuthenticatedUser;
   subject: string;
+  authenticatedAt: number;
   refreshTokenCiphertext: string;
   csrfHash: string;
   tokenExpiresAt: number;
@@ -26,6 +27,7 @@ export function createSessionRecord(input: {
     refreshTokenCiphertext: input.refreshTokenCiphertext,
     csrfHash: input.csrfHash,
     subject: input.subject,
+    authenticatedAt: input.authenticatedAt,
     createdAt: input.now,
     lastSeenAt: input.now,
     absoluteExpiresAt,
@@ -55,6 +57,7 @@ export function rotateSessionRecord(input: {
     refreshTokenCiphertext: input.refreshTokenCiphertext,
     csrfHash: input.csrfHash,
     subject: input.existing.subject,
+    authenticatedAt: input.existing.authenticatedAt,
     createdAt: input.existing.createdAt,
     lastSeenAt: input.now,
     absoluteExpiresAt: input.existing.absoluteExpiresAt,
@@ -65,7 +68,16 @@ export function rotateSessionRecord(input: {
 }
 
 export function isSessionExpired(record: SessionRecord, now: number): boolean {
-  return record.absoluteExpiresAt <= now || record.idleExpiresAt <= now;
+  const authenticationTimeIsValid =
+    Number.isSafeInteger(record.authenticatedAt) &&
+    record.authenticatedAt >= 0 &&
+    record.authenticatedAt <= record.createdAt + 60;
+
+  return (
+    !authenticationTimeIsValid ||
+    record.absoluteExpiresAt <= now ||
+    record.idleExpiresAt <= now
+  );
 }
 
 export function effectiveExpiresAt(record: SessionRecord): number {
