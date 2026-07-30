@@ -26,6 +26,13 @@ interface JwkSet {
   keys: CognitoJwk[];
 }
 
+export const COGNITO_OAUTH_SCOPES = [
+  "openid",
+  "email",
+  "profile",
+  "aws.cognito.signin.user.admin",
+] as const;
+
 export interface CognitoTokens {
   idToken: string;
   accessToken: string;
@@ -63,7 +70,7 @@ export class CognitoService {
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", this.config.clientId);
     url.searchParams.set("redirect_uri", this.config.callbackUrl);
-    url.searchParams.set("scope", "openid email profile");
+    url.searchParams.set("scope", COGNITO_OAUTH_SCOPES.join(" "));
     url.searchParams.set("state", state);
     url.searchParams.set("nonce", nonce);
     url.searchParams.set("code_challenge", pkceChallenge(codeVerifier));
