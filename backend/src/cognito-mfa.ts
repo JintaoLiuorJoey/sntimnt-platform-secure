@@ -1,6 +1,7 @@
 import {
   AssociateSoftwareTokenCommand,
   CognitoIdentityProviderClient,
+  GetUserCommand,
   SetUserMFAPreferenceCommand,
   VerifySoftwareTokenCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
@@ -10,6 +11,11 @@ export type CognitoMfaClient = Pick<
   CognitoIdentityProviderClient,
   "send"
 >;
+
+export interface CognitoUserMfaStatus {
+  softwareTokenMfaEnabled: boolean;
+  softwareTokenMfaPreferred: boolean;
+}
 
 function requireAccessToken(accessToken: string): void {
   if (
@@ -46,6 +52,31 @@ export class CognitoMfaService {
       new CognitoIdentityProviderClient({
         region: config.region,
       });
+  }
+
+  async getUserMfaStatus(
+    accessToken: string,
+  ): Promise<CognitoUserMfaStatus> {
+    requireAccessToken(accessToken);
+
+    const response = await this.client.send(
+      new GetUserCommand({
+        AccessToken: accessToken,
+      }),
+    );
+
+    const activeSettings =
+      response.UserMFASettingList ?? [];
+
+    return {
+      softwareTokenMfaEnabled:
+        activeSettings.includes(
+          "SOFTWARE_TOKEN_MFA",
+        ),
+      softwareTokenMfaPreferred:
+        response.PreferredMfaSetting ===
+        "SOFTWARE_TOKEN_MFA",
+    };
   }
 
   async startTotpEnrollment(

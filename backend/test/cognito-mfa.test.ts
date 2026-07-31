@@ -1,5 +1,6 @@
 import {
   AssociateSoftwareTokenCommand,
+  GetUserCommand,
   SetUserMFAPreferenceCommand,
   VerifySoftwareTokenCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
@@ -32,6 +33,94 @@ function createService(...responses: unknown[]) {
 }
 
 describe("Cognito TOTP enrollment service", () => {
+  it("reads the current user's activated and preferred TOTP status", async () => {
+    const { service, send } = createService({
+      UserMFASettingList: [
+        "SOFTWARE_TOKEN_MFA",
+      ],
+      PreferredMfaSetting:
+        "SOFTWARE_TOKEN_MFA",
+    });
+
+    await expect(
+      service.getUserMfaStatus("access-token"),
+    ).resolves.toEqual({
+      softwareTokenMfaEnabled: true,
+      softwareTokenMfaPreferred: true,
+    });
+
+    const command = send.mock.calls[0]?.[0] as
+      | GetUserCommand
+      | undefined;
+
+    expect(command).toBeInstanceOf(
+      GetUserCommand,
+    );
+
+    expect(command?.input).toEqual({
+      AccessToken: "access-token",
+    });
+  });
+
+  it("distinguishes activated TOTP from the preferred MFA factor", async () => {
+    const { service } = createService({
+      UserMFASettingList: [
+        "SOFTWARE_TOKEN_MFA",
+        "SMS_MFA",
+      ],
+      PreferredMfaSetting: "SMS_MFA",
+    });
+
+    await expect(
+      service.getUserMfaStatus("access-token"),
+    ).resolves.toEqual({
+      softwareTokenMfaEnabled: true,
+      softwareTokenMfaPreferred: false,
+    });
+  });
+
+  it.each([
+    [
+      "no MFA settings",
+      {},
+    ],
+    [
+      "only a different MFA factor",
+      {
+        UserMFASettingList: ["SMS_MFA"],
+        PreferredMfaSetting: "SMS_MFA",
+      },
+    ],
+  ])(
+    "fails closed when Cognito reports %s",
+    async (_description, response) => {
+      const { service } =
+        createService(response);
+
+      await expect(
+        service.getUserMfaStatus(
+          "access-token",
+        ),
+      ).resolves.toEqual({
+        softwareTokenMfaEnabled: false,
+        softwareTokenMfaPreferred: false,
+      });
+    },
+  );
+
+  it("rejects an invalid access token before reading MFA status", async () => {
+    const { service, send } =
+      createService();
+
+    await expect(
+      service.getUserMfaStatus(
+        " access-token",
+      ),
+    ).rejects.toThrow("access token");
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("begins enrollment with the current user's access token", async () => {
     const { service, send } = createService({
       SecretCode: "ABCDEFGHIJKLMNOP",
