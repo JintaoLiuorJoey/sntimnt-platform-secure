@@ -24,6 +24,7 @@ export interface SessionRecord {
   kind: "session";
   user: AuthenticatedUser;
   refreshTokenCiphertext: string;
+  accessTokenCiphertext: string;
   csrfHash: string;
   subject: string;
   authenticatedAt: number;

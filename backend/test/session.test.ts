@@ -30,6 +30,7 @@ function storedSession(authenticatedAt = 900): SessionRecord {
       subject: "user-1",
       authenticatedAt,
       refreshTokenCiphertext: "ciphertext",
+      accessTokenCiphertext: "access-ciphertext",
       csrfHash: "hash",
       tokenExpiresAt: 4_600,
     }),
@@ -46,6 +47,7 @@ describe("server-side session lifecycle", () => {
       subject: "user-1",
       authenticatedAt: 900,
       refreshTokenCiphertext: "ciphertext",
+      accessTokenCiphertext: "access-ciphertext",
       csrfHash: "hash",
       tokenExpiresAt: 4_600,
     });
@@ -66,6 +68,7 @@ describe("server-side session lifecycle", () => {
         subject: "user-1",
         authenticatedAt: 900,
         refreshTokenCiphertext: "ciphertext",
+        accessTokenCiphertext: "access-ciphertext",
         csrfHash: "hash",
         tokenExpiresAt: 4_600,
       }),
@@ -76,6 +79,21 @@ describe("server-side session lifecycle", () => {
     delete legacyRecord.authenticatedAt;
 
     expect(isSessionExpired(legacyRecord as SessionRecord, 1_001)).toBe(true);
+  });
+
+  it("fails closed for a legacy session without encrypted access token", () => {
+    const legacyRecord: Partial<SessionRecord> = {
+      ...storedSession(),
+    };
+
+    delete legacyRecord.accessTokenCiphertext;
+
+    expect(
+      isSessionExpired(
+        legacyRecord as SessionRecord,
+        1_001,
+      ),
+    ).toBe(true);
   });
 
   it.each([
@@ -94,6 +112,7 @@ describe("server-side session lifecycle", () => {
           subject: "user-1",
           authenticatedAt: 900,
           refreshTokenCiphertext: "ciphertext",
+          accessTokenCiphertext: "access-ciphertext",
           csrfHash: "hash",
           tokenExpiresAt: 4_600,
         }),
@@ -118,6 +137,7 @@ describe("server-side session lifecycle", () => {
         subject: "user-1",
         authenticatedAt: 900,
         refreshTokenCiphertext: "old",
+        accessTokenCiphertext: "old-access",
         csrfHash: "old-hash",
         tokenExpiresAt: 4_600,
       }),
@@ -130,6 +150,7 @@ describe("server-side session lifecycle", () => {
       now: 2_000,
       user,
       refreshTokenCiphertext: "new",
+      accessTokenCiphertext: "new-access",
       csrfHash: "new-hash",
       tokenExpiresAt: 5_600,
     });
@@ -138,6 +159,7 @@ describe("server-side session lifecycle", () => {
     expect(rotated.idleExpiresAt).toBe(3_800);
     expect(rotated.authenticatedAt).toBe(existing.authenticatedAt);
     expect(rotated.refreshTokenCiphertext).toBe("new");
+    expect(rotated.accessTokenCiphertext).toBe("new-access");
   });
 
   it("accepts recent authentication within and at the policy boundary", () => {
@@ -184,6 +206,7 @@ describe("server-side session lifecycle", () => {
         subject: "user-1",
         authenticatedAt: 900,
         refreshTokenCiphertext: "secret-token",
+        accessTokenCiphertext: "secret-access-token",
         csrfHash: "secret-hash",
         tokenExpiresAt: 4_600,
       }),
@@ -195,6 +218,7 @@ describe("server-side session lifecycle", () => {
     expect(response.user).toEqual(user);
     expect(response).not.toHaveProperty("authenticatedAt");
     expect(response).not.toHaveProperty("refreshTokenCiphertext");
+    expect(response).not.toHaveProperty("accessTokenCiphertext");
     expect(response).not.toHaveProperty("csrfHash");
   });
 });

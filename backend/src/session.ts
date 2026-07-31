@@ -12,6 +12,7 @@ export function createSessionRecord(input: {
   subject: string;
   authenticatedAt: number;
   refreshTokenCiphertext: string;
+  accessTokenCiphertext: string;
   csrfHash: string;
   tokenExpiresAt: number;
 }): Omit<SessionRecord, "pk"> {
@@ -25,6 +26,7 @@ export function createSessionRecord(input: {
     kind: "session",
     user: input.user,
     refreshTokenCiphertext: input.refreshTokenCiphertext,
+    accessTokenCiphertext: input.accessTokenCiphertext,
     csrfHash: input.csrfHash,
     subject: input.subject,
     authenticatedAt: input.authenticatedAt,
@@ -43,6 +45,7 @@ export function rotateSessionRecord(input: {
   now: number;
   user: AuthenticatedUser;
   refreshTokenCiphertext: string;
+  accessTokenCiphertext: string;
   csrfHash: string;
   tokenExpiresAt: number;
 }): Omit<SessionRecord, "pk"> {
@@ -55,6 +58,7 @@ export function rotateSessionRecord(input: {
     kind: "session",
     user: input.user,
     refreshTokenCiphertext: input.refreshTokenCiphertext,
+    accessTokenCiphertext: input.accessTokenCiphertext,
     csrfHash: input.csrfHash,
     subject: input.existing.subject,
     authenticatedAt: input.existing.authenticatedAt,
@@ -65,6 +69,19 @@ export function rotateSessionRecord(input: {
     tokenExpiresAt: input.tokenExpiresAt,
     ttl: input.existing.absoluteExpiresAt,
   };
+}
+
+function sessionCiphertextsAreValid(record: SessionRecord): boolean {
+  return (
+    typeof record.refreshTokenCiphertext === "string" &&
+    record.refreshTokenCiphertext.length > 0 &&
+    record.refreshTokenCiphertext.trim() ===
+      record.refreshTokenCiphertext &&
+    typeof record.accessTokenCiphertext === "string" &&
+    record.accessTokenCiphertext.length > 0 &&
+    record.accessTokenCiphertext.trim() ===
+      record.accessTokenCiphertext
+  );
 }
 
 function authenticationTimeIsValid(record: SessionRecord): boolean {
@@ -79,6 +96,7 @@ function authenticationTimeIsValid(record: SessionRecord): boolean {
 
 export function isSessionExpired(record: SessionRecord, now: number): boolean {
   return (
+    !sessionCiphertextsAreValid(record) ||
     !authenticationTimeIsValid(record) ||
     record.absoluteExpiresAt <= now ||
     record.idleExpiresAt <= now

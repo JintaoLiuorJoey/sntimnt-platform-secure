@@ -133,6 +133,11 @@ async function handleCallback(event: APIGatewayProxyEventV2) {
       "cognito-refresh-token",
       sessionId,
     );
+    const accessTokenCiphertext = await cipher.encrypt(
+      tokens.accessToken,
+      "cognito-access-token",
+      sessionId,
+    );
     const record = createSessionRecord({
       config,
       now,
@@ -140,6 +145,7 @@ async function handleCallback(event: APIGatewayProxyEventV2) {
       subject: identity.subject,
       authenticatedAt: identity.authenticatedAt,
       refreshTokenCiphertext,
+      accessTokenCiphertext,
       csrfHash: sha256(csrfToken),
       tokenExpiresAt: identity.tokenExpiresAt,
     });
@@ -267,9 +273,14 @@ async function handleRefresh(event: APIGatewayProxyEventV2) {
     issuedRefreshToken = tokens.refreshToken;
     const nextSessionId = randomToken();
     const nextCsrfToken = randomToken();
-    const nextCiphertext = await cipher.encrypt(
+    const nextRefreshTokenCiphertext = await cipher.encrypt(
       nextRefreshToken,
       "cognito-refresh-token",
+      nextSessionId,
+    );
+    const nextAccessTokenCiphertext = await cipher.encrypt(
+      tokens.accessToken,
+      "cognito-access-token",
       nextSessionId,
     );
     const nextRecord = rotateSessionRecord({
@@ -277,7 +288,8 @@ async function handleRefresh(event: APIGatewayProxyEventV2) {
       existing: loaded.record,
       now,
       user: identity.user,
-      refreshTokenCiphertext: nextCiphertext,
+      refreshTokenCiphertext: nextRefreshTokenCiphertext,
+      accessTokenCiphertext: nextAccessTokenCiphertext,
       csrfHash: sha256(nextCsrfToken),
       tokenExpiresAt: identity.tokenExpiresAt,
     });
