@@ -3,7 +3,6 @@ import type {
   APIGatewayProxyStructuredResultV2,
   Context,
 } from "aws-lambda";
-import { loadConfig } from "./config.js";
 import {
   clearAuthCookies,
   clearOAuthCookie,
@@ -12,8 +11,6 @@ import {
   parseCookies,
   sessionCookies,
 } from "./cookies.js";
-import { CognitoMfaService } from "./cognito-mfa.js";
-import { CognitoService } from "./cognito.js";
 import { csrfIsValid } from "./csrf.js";
 import {
   clientIp,
@@ -22,7 +19,6 @@ import {
   rateLimitedResponse,
   redirectResponse,
 } from "./http.js";
-import { KmsCipher } from "./kms-cipher.js";
 import { totpEnrollmentDecision } from "./mfa-policy.js";
 import { parseTotpVerificationCode } from "./mfa-request.js";
 import {
@@ -37,14 +33,16 @@ import {
   publicSession,
   rotateSessionRecord,
 } from "./session.js";
-import { AuthStore } from "./store.js";
+import { createAuthRuntime } from "./runtime.js";
 import type { SessionRecord } from "./types.js";
 
-const config = loadConfig();
-const store = new AuthStore(config);
-const cipher = new KmsCipher(config);
-const cognito = new CognitoService(config);
-const cognitoMfa = new CognitoMfaService(config);
+const {
+  config,
+  store,
+  cipher,
+  cognito,
+  cognitoMfa,
+} = createAuthRuntime();
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
