@@ -73,6 +73,7 @@ export class CognitoService {
     url.searchParams.set("scope", COGNITO_OAUTH_SCOPES.join(" "));
     url.searchParams.set("state", state);
     url.searchParams.set("nonce", nonce);
+    url.searchParams.set("prompt", "login");
     url.searchParams.set("code_challenge", pkceChallenge(codeVerifier));
     url.searchParams.set("code_challenge_method", "S256");
     return url.toString();

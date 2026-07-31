@@ -34,6 +34,24 @@ describe("Cognito OAuth scope boundary", () => {
     expect(url.searchParams.getAll("scope")).toHaveLength(1);
   });
 
+  it("requires interactive authentication for every sign-in request", () => {
+    const url = new URL(
+      new CognitoService(config).buildAuthorizeUrl(
+        "state-value",
+        "nonce-value",
+        "verifier-value",
+      ),
+    );
+
+    expect(
+      url.searchParams.get("prompt"),
+    ).toBe("login");
+
+    expect(
+      url.searchParams.getAll("prompt"),
+    ).toEqual(["login"]);
+  });
+
   it("keeps the infrastructure app-client scopes synchronized", () => {
     const template = fs
       .readFileSync(
@@ -119,5 +137,6 @@ describe("Cognito OAuth scope boundary", () => {
     });
 
     expect(body.has("scope")).toBe(false);
+    expect(body.has("prompt")).toBe(false);
   });
 });
