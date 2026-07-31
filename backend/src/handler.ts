@@ -12,6 +12,7 @@ import {
   parseCookies,
   sessionCookies,
 } from "./cookies.js";
+import { CognitoMfaService } from "./cognito-mfa.js";
 import { CognitoService } from "./cognito.js";
 import { csrfIsValid } from "./csrf.js";
 import {
@@ -22,6 +23,7 @@ import {
   redirectResponse,
 } from "./http.js";
 import { KmsCipher } from "./kms-cipher.js";
+import { totpEnrollmentDecision } from "./mfa-policy.js";
 import {
   constantTimeEqual,
   randomToken,
@@ -41,6 +43,7 @@ const config = loadConfig();
 const store = new AuthStore(config);
 const cipher = new KmsCipher(config);
 const cognito = new CognitoService(config);
+const cognitoMfa = new CognitoMfaService(config);
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
@@ -311,6 +314,96 @@ async function handleRefresh(event: APIGatewayProxyEventV2) {
   }
 }
 
+async function handleTotpEnrollmentStart(
+  event: APIGatewayProxyEventV2,
+) {
+  const loaded = await loadSession(event);
+
+  if (!loaded) {
+    return jsonResponse(
+      401,
+      { message: "Authentication is required." },
+      clearAuthCookies(config),
+    );
+  }
+
+  if (!csrfIsValid(event, config, loaded.record)) {
+    return jsonResponse(
+      403,
+      { message: "The request could not be verified." },
+    );
+  }
+
+  const now = nowSeconds();
+  const decision = totpEnrollmentDecision(
+    loaded.record,
+    now,
+    config.recentAuthenticationMaxAgeSeconds,
+  );
+
+  if (decision === "forbidden") {
+    return jsonResponse(
+      403,
+      { message: "The requested operation is not permitted." },
+    );
+  }
+
+  if (decision === "recent-authentication-required") {
+    return jsonResponse(
+      403,
+      { message: "Recent authentication is required." },
+    );
+  }
+
+  if (decision === "token-refresh-required") {
+    return jsonResponse(
+      409,
+      { message: "Refresh the session before starting MFA enrollment." },
+    );
+  }
+
+  let accessToken: string;
+
+  try {
+    accessToken = await cipher.decrypt(
+      loaded.record.accessTokenCiphertext,
+      "cognito-access-token",
+      loaded.sessionId,
+    );
+  } catch {
+    await destroySession(
+      loaded.sessionId,
+      event.requestContext.requestId,
+    );
+
+    return jsonResponse(
+      401,
+      { message: "Authentication is required." },
+      clearAuthCookies(config),
+    );
+  }
+
+  try {
+    const { secretCode } =
+      await cognitoMfa.startTotpEnrollment(accessToken);
+
+    return jsonResponse(200, { secretCode });
+  } catch (error) {
+    console.error("auth_totp_enrollment_start_failed", {
+      requestId: event.requestContext.requestId,
+      errorName:
+        error instanceof Error
+          ? error.name
+          : "UnknownError",
+    });
+
+    return jsonResponse(
+      503,
+      { message: "MFA enrollment is temporarily unavailable." },
+    );
+  }
+}
+
 async function handleLogout(event: APIGatewayProxyEventV2) {
   const loaded = await loadSession(event);
   if (!loaded) return emptyResponse(204, clearAuthCookies(config));
@@ -331,6 +424,12 @@ async function route(event: APIGatewayProxyEventV2) {
   if (method === "GET" && path === "/api/auth/callback") return handleCallback(event);
   if (method === "GET" && path === "/api/auth/session") return handleSession(event);
   if (method === "POST" && path === "/api/auth/refresh") return handleRefresh(event);
+  if (
+    method === "POST" &&
+    path === "/api/auth/mfa/totp/start"
+  ) {
+    return handleTotpEnrollmentStart(event);
+  }
   if (method === "POST" && path === "/api/auth/logout") return handleLogout(event);
 
   return jsonResponse(404, { message: "Not found." });
