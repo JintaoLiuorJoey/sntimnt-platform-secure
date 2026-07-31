@@ -21,6 +21,13 @@ const user = {
   roles: ["investor" as const],
 };
 
+const adminUser = {
+  ...user,
+  email: "admin@example.com",
+  displayName: "Administrator",
+  roles: ["admin" as const],
+};
+
 function storedSession(authenticatedAt = 900): SessionRecord {
   return {
     ...createSessionRecord({
@@ -55,6 +62,9 @@ describe("server-side session lifecycle", () => {
     expect(record.absoluteExpiresAt).toBe(29_800);
     expect(record.idleExpiresAt).toBe(2_800);
     expect(record.authenticatedAt).toBe(900);
+    expect(
+      record.adminMfaConfiguration,
+    ).toBe("not-required");
     expect(isSessionExpired({ ...record, pk: "pk" }, 2_799)).toBe(false);
     expect(isSessionExpired({ ...record, pk: "pk" }, 2_800)).toBe(true);
   });
@@ -94,6 +104,84 @@ describe("server-side session lifecycle", () => {
         1_001,
       ),
     ).toBe(true);
+  });
+
+  it("fails closed for a legacy session without administrator MFA state", () => {
+    const legacyRecord: Partial<SessionRecord> = {
+      ...storedSession(),
+    };
+
+    delete legacyRecord.adminMfaConfiguration;
+
+    expect(
+      isSessionExpired(
+        legacyRecord as SessionRecord,
+        1_001,
+      ),
+    ).toBe(true);
+  });
+
+  it("defaults administrator sessions to enrollment-required", () => {
+    const record = createSessionRecord({
+      config,
+      now: 1_000,
+      user: adminUser,
+      subject: "admin-1",
+      authenticatedAt: 900,
+      refreshTokenCiphertext: "ciphertext",
+      accessTokenCiphertext:
+        "access-ciphertext",
+      csrfHash: "hash",
+      tokenExpiresAt: 4_600,
+    });
+
+    expect(
+      record.adminMfaConfiguration,
+    ).toBe("enrollment-required");
+  });
+
+  it("rejects an administrator session marked not-required", () => {
+    expect(() =>
+      createSessionRecord({
+        config,
+        now: 1_000,
+        user: adminUser,
+        adminMfaConfiguration:
+          "not-required",
+        subject: "admin-1",
+        authenticatedAt: 900,
+        refreshTokenCiphertext:
+          "ciphertext",
+        accessTokenCiphertext:
+          "access-ciphertext",
+        csrfHash: "hash",
+        tokenExpiresAt: 4_600,
+      }),
+    ).toThrow(
+      "Administrator MFA configuration does not match the session roles.",
+    );
+  });
+
+  it("rejects a non-administrator session marked configured", () => {
+    expect(() =>
+      createSessionRecord({
+        config,
+        now: 1_000,
+        user,
+        adminMfaConfiguration:
+          "configured",
+        subject: "user-1",
+        authenticatedAt: 900,
+        refreshTokenCiphertext:
+          "ciphertext",
+        accessTokenCiphertext:
+          "access-ciphertext",
+        csrfHash: "hash",
+        tokenExpiresAt: 4_600,
+      }),
+    ).toThrow(
+      "Administrator MFA configuration does not match the session roles.",
+    );
   });
 
   it.each([
@@ -160,6 +248,68 @@ describe("server-side session lifecycle", () => {
     expect(rotated.authenticatedAt).toBe(existing.authenticatedAt);
     expect(rotated.refreshTokenCiphertext).toBe("new");
     expect(rotated.accessTokenCiphertext).toBe("new-access");
+  });
+
+  it("updates and preserves configured administrator MFA state during rotation", () => {
+    const existing = {
+      ...createSessionRecord({
+        config,
+        now: 1_000,
+        user: adminUser,
+        subject: "admin-1",
+        authenticatedAt: 900,
+        refreshTokenCiphertext: "old",
+        accessTokenCiphertext:
+          "old-access",
+        csrfHash: "old-hash",
+        tokenExpiresAt: 4_600,
+      }),
+      pk: "pk",
+    } satisfies SessionRecord;
+
+    expect(
+      existing.adminMfaConfiguration,
+    ).toBe("enrollment-required");
+
+    const configured =
+      rotateSessionRecord({
+        config,
+        existing,
+        now: 2_000,
+        user: adminUser,
+        adminMfaConfiguration:
+          "configured",
+        refreshTokenCiphertext: "new",
+        accessTokenCiphertext:
+          "new-access",
+        csrfHash: "new-hash",
+        tokenExpiresAt: 5_600,
+      });
+
+    expect(
+      configured.adminMfaConfiguration,
+    ).toBe("configured");
+
+    const preserved =
+      rotateSessionRecord({
+        config,
+        existing: {
+          ...configured,
+          pk: "next-pk",
+        },
+        now: 2_100,
+        user: adminUser,
+        refreshTokenCiphertext:
+          "newer",
+        accessTokenCiphertext:
+          "newer-access",
+        csrfHash: "newer-hash",
+        tokenExpiresAt: 5_700,
+      });
+
+    expect(
+      preserved.adminMfaConfiguration,
+    ).toBe("configured");
   });
 
   it("accepts recent authentication within and at the policy boundary", () => {

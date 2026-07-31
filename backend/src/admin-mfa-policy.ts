@@ -2,13 +2,13 @@ import type {
   CognitoUserMfaStatus,
 } from "./cognito-mfa.js";
 import type {
+  AdminMfaConfigurationDecision,
   AuthenticatedUser,
 } from "./types.js";
 
-export type AdminMfaConfigurationDecision =
-  | "not-required"
-  | "enrollment-required"
-  | "configured";
+export type {
+  AdminMfaConfigurationDecision,
+} from "./types.js";
 
 export function adminMfaConfigurationDecision(
   user: AuthenticatedUser,

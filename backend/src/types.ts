@@ -1,6 +1,11 @@
 export const USER_ROLES = ["investor", "admin", "operations"] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
+export type AdminMfaConfigurationDecision =
+  | "not-required"
+  | "enrollment-required"
+  | "configured";
+
 export interface AuthenticatedUser {
   id: string;
   email: string;
@@ -23,6 +28,7 @@ export interface SessionRecord {
   pk: string;
   kind: "session";
   user: AuthenticatedUser;
+  adminMfaConfiguration: AdminMfaConfigurationDecision;
   refreshTokenCiphertext: string;
   accessTokenCiphertext: string;
   csrfHash: string;

@@ -1,14 +1,56 @@
 import type { AuthConfig } from "./config.js";
 import type {
+  AdminMfaConfigurationDecision,
   AuthenticatedUser,
   PublicSession,
   SessionRecord,
 } from "./types.js";
 
+function adminMfaConfigurationMatchesUser(
+  user: AuthenticatedUser,
+  decision: unknown,
+): decision is AdminMfaConfigurationDecision {
+  if (user.roles.includes("admin")) {
+    return (
+      decision === "enrollment-required" ||
+      decision === "configured"
+    );
+  }
+
+  return decision === "not-required";
+}
+
+function resolveAdminMfaConfiguration(
+  user: AuthenticatedUser,
+  decision:
+    | AdminMfaConfigurationDecision
+    | undefined,
+): AdminMfaConfigurationDecision {
+  const resolved =
+    decision ??
+    (user.roles.includes("admin")
+      ? "enrollment-required"
+      : "not-required");
+
+  if (
+    !adminMfaConfigurationMatchesUser(
+      user,
+      resolved,
+    )
+  ) {
+    throw new Error(
+      "Administrator MFA configuration does not match the session roles.",
+    );
+  }
+
+  return resolved;
+}
+
 export function createSessionRecord(input: {
   config: AuthConfig;
   now: number;
   user: AuthenticatedUser;
+  adminMfaConfiguration?: AdminMfaConfigurationDecision;
   subject: string;
   authenticatedAt: number;
   refreshTokenCiphertext: string;
@@ -25,6 +67,11 @@ export function createSessionRecord(input: {
   return {
     kind: "session",
     user: input.user,
+    adminMfaConfiguration:
+      resolveAdminMfaConfiguration(
+        input.user,
+        input.adminMfaConfiguration,
+      ),
     refreshTokenCiphertext: input.refreshTokenCiphertext,
     accessTokenCiphertext: input.accessTokenCiphertext,
     csrfHash: input.csrfHash,
@@ -44,6 +91,7 @@ export function rotateSessionRecord(input: {
   existing: SessionRecord;
   now: number;
   user: AuthenticatedUser;
+  adminMfaConfiguration?: AdminMfaConfigurationDecision;
   refreshTokenCiphertext: string;
   accessTokenCiphertext: string;
   csrfHash: string;
@@ -57,6 +105,12 @@ export function rotateSessionRecord(input: {
   return {
     kind: "session",
     user: input.user,
+    adminMfaConfiguration:
+      resolveAdminMfaConfiguration(
+        input.user,
+        input.adminMfaConfiguration ??
+          input.existing.adminMfaConfiguration,
+      ),
     refreshTokenCiphertext: input.refreshTokenCiphertext,
     accessTokenCiphertext: input.accessTokenCiphertext,
     csrfHash: input.csrfHash,
@@ -96,6 +150,10 @@ function authenticationTimeIsValid(record: SessionRecord): boolean {
 
 export function isSessionExpired(record: SessionRecord, now: number): boolean {
   return (
+    !adminMfaConfigurationMatchesUser(
+      record.user,
+      record.adminMfaConfiguration,
+    ) ||
     !sessionCiphertextsAreValid(record) ||
     !authenticationTimeIsValid(record) ||
     record.absoluteExpiresAt <= now ||

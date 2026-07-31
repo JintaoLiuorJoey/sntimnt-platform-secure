@@ -67,6 +67,8 @@ function session(
       displayName: "Administrator",
       roles: ["admin"],
     },
+    adminMfaConfiguration:
+      "enrollment-required",
     refreshTokenCiphertext:
       "refresh-token-ciphertext",
     accessTokenCiphertext:
@@ -281,6 +283,8 @@ describe("TOTP enrollment HTTP boundary", () => {
             displayName: "User",
             roles: [role],
           },
+          adminMfaConfiguration:
+            "not-required",
         }),
       );
 
