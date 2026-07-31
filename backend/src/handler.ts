@@ -24,6 +24,7 @@ import {
 } from "./http.js";
 import { KmsCipher } from "./kms-cipher.js";
 import { totpEnrollmentDecision } from "./mfa-policy.js";
+import { parseTotpVerificationCode } from "./mfa-request.js";
 import {
   constantTimeEqual,
   randomToken,
@@ -314,92 +315,304 @@ async function handleRefresh(event: APIGatewayProxyEventV2) {
   }
 }
 
-async function handleTotpEnrollmentStart(
+type TotpAuthorization =
+  | {
+      loaded: {
+        sessionId: string;
+        record: SessionRecord;
+      };
+    }
+  | {
+      response: APIGatewayProxyStructuredResultV2;
+    };
+
+type TotpAccessToken =
+  | {
+      accessToken: string;
+    }
+  | {
+      response: APIGatewayProxyStructuredResultV2;
+    };
+
+function cognitoAccessTokenWasRejected(
+  error: unknown,
+): boolean {
+  return (
+    error instanceof Error &&
+    (
+      error.name === "NotAuthorizedException" ||
+      error.name === "UserNotFoundException"
+    )
+  );
+}
+
+function cognitoTotpCodeWasRejected(
+  error: unknown,
+): boolean {
+  return (
+    error instanceof Error &&
+    error.name === "CodeMismatchException"
+  );
+}
+
+async function authorizeTotpRequest(
   event: APIGatewayProxyEventV2,
-) {
+): Promise<TotpAuthorization> {
   const loaded = await loadSession(event);
 
   if (!loaded) {
-    return jsonResponse(
-      401,
-      { message: "Authentication is required." },
-      clearAuthCookies(config),
-    );
+    return {
+      response: jsonResponse(
+        401,
+        { message: "Authentication is required." },
+        clearAuthCookies(config),
+      ),
+    };
   }
 
   if (!csrfIsValid(event, config, loaded.record)) {
-    return jsonResponse(
-      403,
-      { message: "The request could not be verified." },
-    );
+    return {
+      response: jsonResponse(
+        403,
+        {
+          message:
+            "The request could not be verified.",
+        },
+      ),
+    };
   }
 
-  const now = nowSeconds();
   const decision = totpEnrollmentDecision(
     loaded.record,
-    now,
+    nowSeconds(),
     config.recentAuthenticationMaxAgeSeconds,
   );
 
   if (decision === "forbidden") {
-    return jsonResponse(
-      403,
-      { message: "The requested operation is not permitted." },
-    );
+    return {
+      response: jsonResponse(
+        403,
+        {
+          message:
+            "The requested operation is not permitted.",
+        },
+      ),
+    };
   }
 
-  if (decision === "recent-authentication-required") {
-    return jsonResponse(
-      403,
-      { message: "Recent authentication is required." },
-    );
+  if (
+    decision ===
+    "recent-authentication-required"
+  ) {
+    return {
+      response: jsonResponse(
+        403,
+        {
+          message:
+            "Recent authentication is required.",
+        },
+      ),
+    };
   }
 
   if (decision === "token-refresh-required") {
-    return jsonResponse(
-      409,
-      { message: "Refresh the session before starting MFA enrollment." },
-    );
+    return {
+      response: jsonResponse(
+        409,
+        {
+          message:
+            "Refresh the session before continuing MFA enrollment.",
+        },
+      ),
+    };
   }
 
-  let accessToken: string;
+  return { loaded };
+}
 
+async function decryptTotpAccessToken(
+  loaded: {
+    sessionId: string;
+    record: SessionRecord;
+  },
+  requestId: string,
+): Promise<TotpAccessToken> {
   try {
-    accessToken = await cipher.decrypt(
-      loaded.record.accessTokenCiphertext,
-      "cognito-access-token",
-      loaded.sessionId,
-    );
+    return {
+      accessToken: await cipher.decrypt(
+        loaded.record.accessTokenCiphertext,
+        "cognito-access-token",
+        loaded.sessionId,
+      ),
+    };
   } catch {
     await destroySession(
       loaded.sessionId,
-      event.requestContext.requestId,
+      requestId,
     );
 
-    return jsonResponse(
-      401,
-      { message: "Authentication is required." },
-      clearAuthCookies(config),
-    );
+    return {
+      response: jsonResponse(
+        401,
+        { message: "Authentication is required." },
+        clearAuthCookies(config),
+      ),
+    };
+  }
+}
+
+async function invalidateRejectedCognitoSession(
+  loaded: {
+    sessionId: string;
+    record: SessionRecord;
+  },
+  requestId: string,
+): Promise<APIGatewayProxyStructuredResultV2> {
+  await destroySession(
+    loaded.sessionId,
+    requestId,
+  );
+
+  return jsonResponse(
+    401,
+    { message: "Authentication is required." },
+    clearAuthCookies(config),
+  );
+}
+
+async function handleTotpEnrollmentStart(
+  event: APIGatewayProxyEventV2,
+) {
+  const authorization =
+    await authorizeTotpRequest(event);
+
+  if ("response" in authorization) {
+    return authorization.response;
+  }
+
+  const token = await decryptTotpAccessToken(
+    authorization.loaded,
+    event.requestContext.requestId,
+  );
+
+  if ("response" in token) {
+    return token.response;
   }
 
   try {
     const { secretCode } =
-      await cognitoMfa.startTotpEnrollment(accessToken);
+      await cognitoMfa.startTotpEnrollment(
+        token.accessToken,
+      );
 
     return jsonResponse(200, { secretCode });
   } catch (error) {
-    console.error("auth_totp_enrollment_start_failed", {
-      requestId: event.requestContext.requestId,
-      errorName:
-        error instanceof Error
-          ? error.name
-          : "UnknownError",
-    });
+    if (cognitoAccessTokenWasRejected(error)) {
+      return invalidateRejectedCognitoSession(
+        authorization.loaded,
+        event.requestContext.requestId,
+      );
+    }
+
+    console.error(
+      "auth_totp_enrollment_start_failed",
+      {
+        requestId:
+          event.requestContext.requestId,
+        errorName:
+          error instanceof Error
+            ? error.name
+            : "UnknownError",
+      },
+    );
 
     return jsonResponse(
       503,
-      { message: "MFA enrollment is temporarily unavailable." },
+      {
+        message:
+          "MFA enrollment is temporarily unavailable.",
+      },
+    );
+  }
+}
+
+async function handleTotpEnrollmentComplete(
+  event: APIGatewayProxyEventV2,
+) {
+  const authorization =
+    await authorizeTotpRequest(event);
+
+  if ("response" in authorization) {
+    return authorization.response;
+  }
+
+  const userCode = parseTotpVerificationCode(
+    event.body,
+    event.isBase64Encoded === true,
+  );
+
+  if (!userCode) {
+    return jsonResponse(
+      400,
+      {
+        message:
+          "A valid six-digit verification code is required.",
+      },
+    );
+  }
+
+  const token = await decryptTotpAccessToken(
+    authorization.loaded,
+    event.requestContext.requestId,
+  );
+
+  if ("response" in token) {
+    return token.response;
+  }
+
+  try {
+    await cognitoMfa.completeTotpEnrollment(
+      token.accessToken,
+      userCode,
+    );
+
+    return emptyResponse(204);
+  } catch (error) {
+    if (cognitoTotpCodeWasRejected(error)) {
+      return jsonResponse(
+        400,
+        {
+          message:
+            "The verification code was not accepted.",
+        },
+      );
+    }
+
+    if (cognitoAccessTokenWasRejected(error)) {
+      return invalidateRejectedCognitoSession(
+        authorization.loaded,
+        event.requestContext.requestId,
+      );
+    }
+
+    console.error(
+      "auth_totp_enrollment_complete_failed",
+      {
+        requestId:
+          event.requestContext.requestId,
+        errorName:
+          error instanceof Error
+            ? error.name
+            : "UnknownError",
+      },
+    );
+
+    return jsonResponse(
+      503,
+      {
+        message:
+          "MFA enrollment is temporarily unavailable.",
+      },
     );
   }
 }
@@ -429,6 +642,12 @@ async function route(event: APIGatewayProxyEventV2) {
     path === "/api/auth/mfa/totp/start"
   ) {
     return handleTotpEnrollmentStart(event);
+  }
+  if (
+    method === "POST" &&
+    path === "/api/auth/mfa/totp/complete"
+  ) {
+    return handleTotpEnrollmentComplete(event);
   }
   if (method === "POST" && path === "/api/auth/logout") return handleLogout(event);
 

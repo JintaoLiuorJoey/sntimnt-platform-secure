@@ -89,6 +89,17 @@ export class CognitoMfaService {
     }
   }
 
+  async completeTotpEnrollment(
+    accessToken: string,
+    userCode: string,
+  ): Promise<void> {
+    await this.verifyTotpEnrollment(
+      accessToken,
+      userCode,
+    );
+    await this.activateTotpMfa(accessToken);
+  }
+
   async activateTotpMfa(accessToken: string): Promise<void> {
     requireAccessToken(accessToken);
 

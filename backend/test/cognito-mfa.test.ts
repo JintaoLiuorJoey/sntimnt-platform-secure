@@ -167,4 +167,56 @@ describe("Cognito TOTP enrollment service", () => {
       },
     });
   });
+
+  it("completes enrollment by verifying before activation", async () => {
+    const { service, send } = createService(
+      { Status: "SUCCESS" },
+      {},
+    );
+
+    await expect(
+      service.completeTotpEnrollment(
+        "access-token",
+        "123456",
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(send).toHaveBeenCalledTimes(2);
+
+    const verificationCommand =
+      send.mock.calls[0]?.[0];
+    const activationCommand =
+      send.mock.calls[1]?.[0];
+
+    expect(verificationCommand).toBeInstanceOf(
+      VerifySoftwareTokenCommand,
+    );
+    expect(activationCommand).toBeInstanceOf(
+      SetUserMFAPreferenceCommand,
+    );
+  });
+
+  it("does not activate MFA when token verification fails", async () => {
+    const { service, send } = createService(
+      { Status: "ERROR" },
+      {},
+    );
+
+    await expect(
+      service.completeTotpEnrollment(
+        "access-token",
+        "123456",
+      ),
+    ).rejects.toThrow(
+      "did not verify",
+    );
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(
+      send.mock.calls[0]?.[0],
+    ).toBeInstanceOf(
+      VerifySoftwareTokenCommand,
+    );
+  });
+
 });
