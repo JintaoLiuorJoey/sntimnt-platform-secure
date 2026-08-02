@@ -28,6 +28,7 @@ const runtime = vi.hoisted(() => ({
   },
   store: {
     getSession: vi.fn(),
+    markAdminMfaConfigured: vi.fn(),
     deleteSession: vi.fn(),
   },
   cipher: {
@@ -192,6 +193,15 @@ beforeEach(() => {
   runtime.store.deleteSession
     .mockReset()
     .mockResolvedValue(null);
+
+  runtime.store.markAdminMfaConfigured
+    .mockReset()
+    .mockResolvedValue(
+      session({
+        adminMfaConfiguration:
+          "configured",
+      }),
+    );
 
   runtime.cipher.decrypt
     .mockReset()
@@ -520,6 +530,14 @@ describe("TOTP enrollment HTTP boundary", () => {
       "access-token",
       "123456",
     );
+
+    expect(
+      runtime.store.markAdminMfaConfigured,
+    ).toHaveBeenCalledWith(
+      SESSION_ID,
+      session(),
+      NOW,
+    );
   });
 
   it("keeps the session when Cognito rejects only the TOTP code", async () => {
@@ -544,9 +562,118 @@ describe("TOTP enrollment HTTP boundary", () => {
     });
 
     expect(
+      runtime.store.markAdminMfaConfigured,
+    ).not.toHaveBeenCalled();
+    expect(
       runtime.store.deleteSession,
     ).not.toHaveBeenCalled();
     expect(runtime.cognito.revoke).not.toHaveBeenCalled();
+  });
+
+  it("invalidates completion when the configured session state cannot be persisted", async () => {
+    runtime.store.markAdminMfaConfigured
+      .mockResolvedValueOnce(null);
+
+    runtime.cipher.decrypt
+      .mockReset()
+      .mockResolvedValueOnce(
+        "access-token",
+      )
+      .mockResolvedValueOnce(
+        "refresh-token",
+      );
+
+    runtime.store.deleteSession
+      .mockResolvedValueOnce(
+        session(),
+      );
+
+    const response = await invokeHandler(
+      event(completePath, {
+        body: JSON.stringify({
+          userCode: "123456",
+        }),
+      }),
+      context,
+    );
+
+    expect(response.statusCode).toBe(401);
+    expectClearedCookies(response);
+
+    expect(
+      runtime.store.markAdminMfaConfigured,
+    ).toHaveBeenCalledWith(
+      SESSION_ID,
+      session(),
+      NOW,
+    );
+
+    expect(
+      runtime.store.deleteSession,
+    ).toHaveBeenCalledWith(
+      SESSION_ID,
+    );
+
+    expect(
+      runtime.cognito.revoke,
+    ).toHaveBeenCalledWith(
+      "refresh-token",
+    );
+  });
+
+  it("invalidates completion when configured-state persistence throws", async () => {
+    runtime.store.markAdminMfaConfigured
+      .mockRejectedValueOnce(
+        new Error(
+          "DynamoDB update failed",
+        ),
+      );
+
+    runtime.cipher.decrypt
+      .mockReset()
+      .mockResolvedValueOnce(
+        "access-token",
+      )
+      .mockResolvedValueOnce(
+        "refresh-token",
+      );
+
+    runtime.store.deleteSession
+      .mockResolvedValueOnce(
+        session(),
+      );
+
+    const response = await invokeHandler(
+      event(completePath, {
+        body: JSON.stringify({
+          userCode: "123456",
+        }),
+      }),
+      context,
+    );
+
+    expect(response.statusCode).toBe(401);
+    expectClearedCookies(response);
+
+    expect(
+      runtime.store.markAdminMfaConfigured,
+    ).toHaveBeenCalledWith(
+      SESSION_ID,
+      session(),
+      NOW,
+    );
+
+    expect(
+      runtime.store.deleteSession,
+    ).toHaveBeenCalledWith(
+      SESSION_ID,
+    );
+
+    expect(
+      runtime.cognito.revoke,
+    ).toHaveBeenCalledWith(
+      "refresh-token",
+    );
   });
 
   it("invalidates completion when Cognito rejects the access token", async () => {
@@ -575,6 +702,9 @@ describe("TOTP enrollment HTTP boundary", () => {
 
     expect(response.statusCode).toBe(401);
     expectClearedCookies(response);
+    expect(
+      runtime.store.markAdminMfaConfigured,
+    ).not.toHaveBeenCalled();
     expect(
       runtime.store.deleteSession,
     ).toHaveBeenCalledWith(SESSION_ID);

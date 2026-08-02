@@ -568,14 +568,38 @@ async function handleTotpEnrollmentComplete(
     return token.response;
   }
 
+  let cognitoConfigured = false;
+
   try {
     await cognitoMfa.completeTotpEnrollment(
       token.accessToken,
       userCode,
     );
 
+    cognitoConfigured = true;
+
+    const configuredSession =
+      await store.markAdminMfaConfigured(
+        authorization.loaded.sessionId,
+        authorization.loaded.record,
+        nowSeconds(),
+      );
+
+    if (!configuredSession) {
+      return invalidateRejectedCognitoSession(
+        authorization.loaded,
+        event.requestContext.requestId,
+      );
+    }
+
     return emptyResponse(204);
   } catch (error) {
+    if (cognitoConfigured) {
+      return invalidateRejectedCognitoSession(
+        authorization.loaded,
+        event.requestContext.requestId,
+      );
+    }
     if (cognitoTotpCodeWasRejected(error)) {
       return jsonResponse(
         400,

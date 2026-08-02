@@ -31,6 +31,9 @@ function recordItem(record: OAuthTransactionRecord | SessionRecord): Item {
   if (record.kind === "session") {
     item.absoluteExpiresAt = { N: String(record.absoluteExpiresAt) };
     item.idleExpiresAt = { N: String(record.idleExpiresAt) };
+    item.adminMfaConfiguration = {
+      S: record.adminMfaConfiguration,
+    };
   }
   return item;
 }
@@ -129,6 +132,85 @@ export class AuthStore {
       if (error instanceof Error && error.name === "ConditionalCheckFailedException") {
         return null;
       }
+      throw error;
+    }
+  }
+
+  async markAdminMfaConfigured(
+    sessionId: string,
+    record: SessionRecord,
+    now: number,
+  ): Promise<SessionRecord | null> {
+    if (
+      !record.user.roles.includes("admin") ||
+      record.adminMfaConfiguration !==
+        "enrollment-required"
+    ) {
+      return null;
+    }
+
+    const nextRecord: SessionRecord = {
+      ...record,
+      adminMfaConfiguration: "configured",
+    };
+
+    try {
+      const response = await this.client.send(
+        new UpdateItemCommand({
+          TableName: this.config.tableName,
+          Key: {
+            pk: {
+              S: sessionPk(sessionId),
+            },
+          },
+          UpdateExpression:
+            "SET #adminMfaConfiguration = :configured, #data = :data",
+          ConditionExpression:
+            "#kind = :sessionKind AND absoluteExpiresAt > :now AND idleExpiresAt > :now AND (attribute_not_exists(#adminMfaConfiguration) OR #adminMfaConfiguration = :enrollmentRequired) AND #data = :expectedData",
+          ExpressionAttributeNames: {
+            "#kind": "kind",
+            "#data": "data",
+            "#adminMfaConfiguration":
+              "adminMfaConfiguration",
+          },
+          ExpressionAttributeValues: {
+            ":sessionKind": {
+              S: "session",
+            },
+            ":now": {
+              N: String(now),
+            },
+            ":enrollmentRequired": {
+              S: "enrollment-required",
+            },
+            ":configured": {
+              S: "configured",
+            },
+            ":expectedData": {
+              S: JSON.stringify(record),
+            },
+            ":data": {
+              S: JSON.stringify(nextRecord),
+            },
+          },
+          ReturnValues: "ALL_NEW",
+        }),
+      );
+
+      return parseRecord<SessionRecord>(
+        response.Attributes as
+          | Item
+          | undefined,
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name ===
+          "ConditionalCheckFailedException"
+      ) {
+        return null;
+      }
+
       throw error;
     }
   }
