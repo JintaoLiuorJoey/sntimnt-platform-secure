@@ -3,6 +3,7 @@ import type {
   APIGatewayProxyStructuredResultV2,
   Context,
 } from "aws-lambda";
+import { adminMfaConfigurationDecision } from "./admin-mfa-policy.js";
 import {
   clearAuthCookies,
   clearOAuthCookie,
@@ -45,6 +46,22 @@ const {
 } = createAuthRuntime();
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+async function currentAdminMfaConfiguration(
+  user: SessionRecord["user"],
+  accessToken: string,
+) {
+  if (!user.roles.includes("admin")) {
+    return "not-required" as const;
+  }
+
+  return adminMfaConfigurationDecision(
+    user,
+    await cognitoMfa.getUserMfaStatus(
+      accessToken,
+    ),
+  );
+}
 
 function appLoginUrl(reason: "authentication-failed" | "try-again-later"): string {
   const url = new URL("/login", `${config.appOrigin}/`);
@@ -128,6 +145,13 @@ async function handleCallback(event: APIGatewayProxyEventV2) {
       tokens.idToken,
       transaction.nonce,
     );
+
+    const adminMfaConfiguration =
+      await currentAdminMfaConfiguration(
+        identity.user,
+        tokens.accessToken,
+      );
+
     const sessionId = randomToken();
     const csrfToken = randomToken();
     const refreshTokenCiphertext = await cipher.encrypt(
@@ -144,6 +168,7 @@ async function handleCallback(event: APIGatewayProxyEventV2) {
       config,
       now,
       user: identity.user,
+      adminMfaConfiguration,
       subject: identity.subject,
       authenticatedAt: identity.authenticatedAt,
       refreshTokenCiphertext,
@@ -266,13 +291,23 @@ async function handleRefresh(event: APIGatewayProxyEventV2) {
       loaded.sessionId,
     );
     const tokens = await cognito.refresh(oldRefreshToken);
+    issuedRefreshToken = tokens.refreshToken;
+
     const identity = await cognito.verifyIdentity(
       tokens.idToken,
       undefined,
       loaded.record.subject,
     );
-    const nextRefreshToken = tokens.refreshToken ?? oldRefreshToken;
-    issuedRefreshToken = tokens.refreshToken;
+
+    const adminMfaConfiguration =
+      await currentAdminMfaConfiguration(
+        identity.user,
+        tokens.accessToken,
+      );
+
+    const nextRefreshToken =
+      tokens.refreshToken ??
+      oldRefreshToken;
     const nextSessionId = randomToken();
     const nextCsrfToken = randomToken();
     const nextRefreshTokenCiphertext = await cipher.encrypt(
@@ -290,6 +325,7 @@ async function handleRefresh(event: APIGatewayProxyEventV2) {
       existing: loaded.record,
       now,
       user: identity.user,
+      adminMfaConfiguration,
       refreshTokenCiphertext: nextRefreshTokenCiphertext,
       accessTokenCiphertext: nextAccessTokenCiphertext,
       csrfHash: sha256(nextCsrfToken),
