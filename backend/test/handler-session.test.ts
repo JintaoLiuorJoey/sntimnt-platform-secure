@@ -235,6 +235,45 @@ function sessionEvent(
   );
 }
 
+function logoutEvent(
+  input: {
+    authenticated?: boolean;
+    csrf?: boolean;
+  } = {},
+): APIGatewayProxyEventV2 {
+  const authenticated =
+    input.authenticated ?? true;
+
+  const csrf =
+    input.csrf ?? true;
+
+  return event(
+    "POST",
+    "/api/auth/logout",
+    {
+      cookies: authenticated
+        ? [
+            "__Host-sntimnt_session=" +
+              SESSION_ID,
+            "__Host-sntimnt_csrf=" +
+              CSRF_TOKEN,
+          ]
+        : [],
+      headers: csrf
+        ? {
+            origin:
+              APP_ORIGIN,
+            "x-csrf-token":
+              CSRF_TOKEN,
+          }
+        : {
+            origin:
+              APP_ORIGIN,
+          },
+    },
+  );
+}
+
 function event(
   method: string,
   path: string,
@@ -1148,6 +1187,273 @@ describe(
       expect(
         response.cookies ?? [],
       ).toEqual([]);
+    });
+
+    it("completes an unauthenticated logout idempotently", async () => {
+      const response =
+        await invokeHandler(
+          logoutEvent({
+            authenticated:
+              false,
+          }),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(204);
+
+      expect(
+        response.body,
+      ).toBe("");
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.getSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.deleteSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects logout without valid CSRF proof", async () => {
+      const current =
+        session();
+
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      const response =
+        await invokeHandler(
+          logoutEvent({
+            csrf: false,
+          }),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(403);
+
+      expect(
+        responseBody(
+          response,
+        ),
+      ).toEqual({
+        message:
+          "The request could not be verified.",
+      });
+
+      expect(
+        response.cookies ?? [],
+      ).toEqual([]);
+
+      expect(
+        runtime.store.deleteSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cipher.decrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("deletes the session and revokes its refresh token during logout", async () => {
+      const current =
+        session();
+
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.store.deleteSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.cipher.decrypt
+        .mockReset()
+        .mockResolvedValueOnce(
+          "logout-refresh-token",
+        );
+
+      const response =
+        await invokeHandler(
+          logoutEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(204);
+
+      expect(
+        response.body,
+      ).toBe("");
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.deleteSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).toHaveBeenCalledWith(
+        "old-refresh-ciphertext",
+        "cognito-refresh-token",
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenCalledWith(
+        "logout-refresh-token",
+      );
+    });
+
+    it("completes logout when session deletion loses a race", async () => {
+      runtime.store.deleteSession
+        .mockResolvedValueOnce(
+          null,
+        );
+
+      const response =
+        await invokeHandler(
+          logoutEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(204);
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.deleteSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("completes local logout when refresh-token decryption fails", async () => {
+      const current =
+        session();
+
+      runtime.store.deleteSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.cipher.decrypt
+        .mockReset()
+        .mockRejectedValueOnce(
+          new Error(
+            "KMS unavailable",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          logoutEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(204);
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.deleteSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("completes local logout when Cognito token revocation fails", async () => {
+      const current =
+        session();
+
+      runtime.store.deleteSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.cipher.decrypt
+        .mockReset()
+        .mockResolvedValueOnce(
+          "logout-refresh-token",
+        );
+
+      runtime.cognito.revoke
+        .mockRejectedValueOnce(
+          new Error(
+            "Cognito unavailable",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          logoutEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(204);
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.deleteSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenCalledWith(
+        "logout-refresh-token",
+      );
     });
   },
 );
