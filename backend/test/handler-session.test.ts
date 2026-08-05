@@ -266,23 +266,39 @@ function callbackEvent(
   );
 }
 
-function refreshEvent():
-  APIGatewayProxyEventV2 {
+function refreshEvent(
+  input: {
+    authenticated?: boolean;
+    csrf?: boolean;
+  } = {},
+): APIGatewayProxyEventV2 {
+  const authenticated =
+    input.authenticated ?? true;
+
+  const csrf =
+    input.csrf ?? true;
+
   return event(
     "POST",
     "/api/auth/refresh",
     {
-      cookies: [
-        "__Host-sntimnt_session=" +
-          SESSION_ID,
-        "__Host-sntimnt_csrf=" +
-          CSRF_TOKEN,
-      ],
-      headers: {
-        origin: APP_ORIGIN,
-        "x-csrf-token":
-          CSRF_TOKEN,
-      },
+      cookies: authenticated
+        ? [
+            "__Host-sntimnt_session=" +
+              SESSION_ID,
+            "__Host-sntimnt_csrf=" +
+              CSRF_TOKEN,
+          ]
+        : [],
+      headers: csrf
+        ? {
+            origin: APP_ORIGIN,
+            "x-csrf-token":
+              CSRF_TOKEN,
+          }
+        : {
+            origin: APP_ORIGIN,
+          },
     },
   );
 }
@@ -1656,6 +1672,610 @@ describe(
         runtime.cognito.revoke,
       ).toHaveBeenCalledWith(
         "refresh-token",
+      );
+    });
+
+
+    it("rejects refresh without a session cookie", async () => {
+      const response =
+        await invokeHandler(
+          refreshEvent({
+            authenticated: false,
+          }),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(401);
+
+      expect(
+        responseBody(
+          response,
+        ),
+      ).toEqual({
+        message:
+          "Authentication is required.",
+      });
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.getSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cipher.decrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.refresh,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.rotateSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.deleteSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects refresh without valid CSRF proof", async () => {
+      const response =
+        await invokeHandler(
+          refreshEvent({
+            csrf: false,
+          }),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(403);
+
+      expect(
+        responseBody(
+          response,
+        ),
+      ).toEqual({
+        message:
+          "The request could not be verified.",
+      });
+
+      expect(
+        response.cookies ?? [],
+      ).toEqual([]);
+
+      expect(
+        runtime.store.getSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.refresh,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.rotateSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.deleteSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("destroys the session when refresh-token decryption fails", async () => {
+      const current =
+        session();
+
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.store.deleteSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.cipher.decrypt
+        .mockReset()
+        .mockRejectedValueOnce(
+          new Error(
+            "KMS unavailable",
+          ),
+        )
+        .mockRejectedValueOnce(
+          new Error(
+            "KMS unavailable",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          refreshEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(401);
+
+      expect(
+        responseBody(
+          response,
+        ),
+      ).toEqual({
+        message:
+          "Authentication is required.",
+      });
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "KMS unavailable",
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).toHaveBeenCalledTimes(2);
+
+      expect(
+        runtime.cipher.decrypt,
+      ).toHaveBeenNthCalledWith(
+        1,
+        "old-refresh-ciphertext",
+        "cognito-refresh-token",
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).toHaveBeenNthCalledWith(
+        2,
+        "old-refresh-ciphertext",
+        "cognito-refresh-token",
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cognito.refresh,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.rotateSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.deleteSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        console.error,
+      ).toHaveBeenCalledWith(
+        "auth_token_decrypt_failed",
+        {
+          requestId:
+            "request-id",
+          errorName:
+            "Error",
+        },
+      );
+    });
+
+    it("destroys and revokes the old session when Cognito refresh fails", async () => {
+      const current =
+        session();
+
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.store.deleteSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.cipher.decrypt
+        .mockReset()
+        .mockResolvedValueOnce(
+          "old-refresh-token",
+        )
+        .mockResolvedValueOnce(
+          "old-refresh-token",
+        );
+
+      runtime.cognito.refresh
+        .mockRejectedValueOnce(
+          new Error(
+            "Cognito refresh unavailable",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          refreshEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(401);
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "Cognito refresh unavailable",
+      );
+
+      expect(
+        runtime.cognito.refresh,
+      ).toHaveBeenCalledWith(
+        "old-refresh-token",
+      );
+
+      expect(
+        runtime.cognito
+          .verifyIdentity,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.rotateSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.deleteSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenCalledWith(
+        "old-refresh-token",
+      );
+    });
+
+    it("revokes both refresh tokens when refreshed identity verification fails", async () => {
+      const current =
+        session();
+
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.store.deleteSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.cipher.decrypt
+        .mockReset()
+        .mockResolvedValueOnce(
+          "old-refresh-token",
+        )
+        .mockResolvedValueOnce(
+          "old-refresh-token",
+        );
+
+      runtime.cognito
+        .verifyIdentity
+        .mockRejectedValueOnce(
+          new Error(
+            "Invalid refreshed identity",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          refreshEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(401);
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "Invalid refreshed identity",
+      );
+
+      expect(
+        runtime.cognito.refresh,
+      ).toHaveBeenCalledWith(
+        "old-refresh-token",
+      );
+
+      expect(
+        runtime.cognito
+          .verifyIdentity,
+      ).toHaveBeenCalledWith(
+        "next-id-token",
+        undefined,
+        "admin-1",
+      );
+
+      expect(
+        runtime.cognitoMfa
+          .getUserMfaStatus,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.rotateSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.deleteSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenCalledTimes(2);
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenNthCalledWith(
+        1,
+        "next-refresh-token",
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenNthCalledWith(
+        2,
+        "old-refresh-token",
+      );
+    });
+
+    it("reuses the existing refresh token when Cognito does not rotate it", async () => {
+      runtime.cipher.decrypt
+        .mockResolvedValueOnce(
+          "old-refresh-token",
+        );
+
+      runtime.cognito.refresh
+        .mockResolvedValueOnce({
+          idToken:
+            "next-id-token",
+          accessToken:
+            "next-access-token",
+          expiresIn: 3_600,
+        });
+
+      const response =
+        await invokeHandler(
+          refreshEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(200);
+
+      expect(
+        runtime.cognito.refresh,
+      ).toHaveBeenCalledWith(
+        "old-refresh-token",
+      );
+
+      expect(
+        runtime.store.rotateSession,
+      ).toHaveBeenCalledTimes(1);
+
+      const rotateCall =
+        runtime.store
+          .rotateSession
+          .mock.calls[0];
+
+      expect(
+        rotateCall,
+      ).toBeDefined();
+
+      const [
+        oldSessionId,
+        nextSessionId,
+        record,
+      ] = rotateCall as [
+        string,
+        string,
+        Omit<
+          SessionRecord,
+          "pk"
+        >,
+      ];
+
+      expect(
+        oldSessionId,
+      ).toBe(SESSION_ID);
+
+      expect(
+        nextSessionId,
+      ).not.toBe("");
+
+      expect(
+        nextSessionId,
+      ).not.toBe(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cipher.encrypt,
+      ).toHaveBeenCalledWith(
+        "old-refresh-token",
+        "cognito-refresh-token",
+        nextSessionId,
+      );
+
+      expect(
+        runtime.cipher.encrypt,
+      ).toHaveBeenCalledWith(
+        "next-access-token",
+        "cognito-access-token",
+        nextSessionId,
+      );
+
+      expect(
+        record
+          .refreshTokenCiphertext,
+      ).toBe(
+        "cognito-refresh-token-ciphertext",
+      );
+
+      expect(
+        record
+          .accessTokenCiphertext,
+      ).toBe(
+        "cognito-access-token-ciphertext",
+      );
+
+      expect(
+        response.cookies?.some(
+          (cookie) =>
+            cookie.startsWith(
+              "__Host-sntimnt_session=" +
+                nextSessionId,
+            ),
+        ),
+      ).toBe(true);
+
+      expect(
+        response.cookies?.some(
+          (cookie) =>
+            cookie.startsWith(
+              "__Host-sntimnt_csrf=",
+            ),
+        ),
+      ).toBe(true);
+
+      expect(
+        runtime.store.deleteSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("revokes both refresh tokens when session rotation fails", async () => {
+      const current =
+        session();
+
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.store.deleteSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.cipher.decrypt
+        .mockReset()
+        .mockResolvedValueOnce(
+          "old-refresh-token",
+        )
+        .mockResolvedValueOnce(
+          "old-refresh-token",
+        );
+
+      runtime.store.rotateSession
+        .mockRejectedValueOnce(
+          new Error(
+            "Session rotation conflict",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          refreshEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(401);
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "Session rotation conflict",
+      );
+
+      expect(
+        runtime.store.rotateSession,
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        runtime.store.deleteSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenCalledTimes(2);
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenNthCalledWith(
+        1,
+        "next-refresh-token",
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenNthCalledWith(
+        2,
+        "old-refresh-token",
       );
     });
 
