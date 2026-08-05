@@ -60,8 +60,17 @@ const runtime = vi.hoisted(() => ({
     cookieSecure: true,
     absoluteTtlSeconds: 28_800,
     idleTtlSeconds: 1_800,
+    oauthTransactionTtlSeconds:
+      600,
+    loginRateLimitCount: 20,
+    loginRateLimitWindowSeconds:
+      300,
   },
   store: {
+    incrementRateLimit:
+      vi.fn(),
+    putOAuthTransaction:
+      vi.fn(),
     consumeOAuthTransaction:
       vi.fn(),
     putSession:
@@ -82,6 +91,8 @@ const runtime = vi.hoisted(() => ({
       vi.fn(),
   },
   cognito: {
+    buildAuthorizeUrl:
+      vi.fn(),
     exchangeAuthorizationCode:
       vi.fn(),
     verifyIdentity:
@@ -177,6 +188,22 @@ function session(
       NOW + 7_200,
     ...overrides,
   };
+}
+
+function loginEvent(
+  returnTo?: string,
+): APIGatewayProxyEventV2 {
+  return event(
+    "GET",
+    "/api/auth/login",
+    returnTo
+      ? {
+          queryStringParameters: {
+            returnTo,
+          },
+        }
+      : {},
+  );
 }
 
 function callbackEvent():
@@ -398,6 +425,18 @@ beforeEach(() => {
   );
 
   runtime.store
+    .incrementRateLimit
+    .mockReset()
+    .mockResolvedValue(1);
+
+  runtime.store
+    .putOAuthTransaction
+    .mockReset()
+    .mockResolvedValue(
+      undefined,
+    );
+
+  runtime.store
     .consumeOAuthTransaction
     .mockReset()
     .mockResolvedValue(
@@ -453,6 +492,39 @@ beforeEach(() => {
       ) =>
         purpose +
         "-ciphertext",
+    );
+
+  runtime.cognito
+    .buildAuthorizeUrl
+    .mockReset()
+    .mockImplementation(
+      (
+        state: string,
+        nonce: string,
+        codeVerifier: string,
+      ) => {
+        const url =
+          new URL(
+            "https://auth.example.com/oauth2/authorize",
+          );
+
+        url.searchParams.set(
+          "state",
+          state,
+        );
+
+        url.searchParams.set(
+          "nonce",
+          nonce,
+        );
+
+        url.searchParams.set(
+          "code_verifier",
+          codeVerifier,
+        );
+
+        return url.toString();
+      },
     );
 
   runtime.cognito
@@ -518,6 +590,473 @@ afterEach(() => {
 describe(
   "authentication session lifecycle",
   () => {
+
+
+    it("creates a browser-bound OAuth transaction at the login rate-limit boundary", async () => {
+      runtime.store
+        .incrementRateLimit
+        .mockResolvedValueOnce(20);
+
+      const response =
+        await invokeHandler(
+          loginEvent(
+            "/portfolio?tab=active",
+          ),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(303);
+
+      expect(
+        response.body,
+      ).toBe("");
+
+      expect(
+        runtime.store
+          .incrementRateLimit,
+      ).toHaveBeenCalledWith(
+        "login",
+        "127.0.0.1",
+        NOW,
+        300,
+      );
+
+      expect(
+        runtime.cipher.encrypt,
+      ).toHaveBeenCalledTimes(1);
+
+      const encryptCall =
+        runtime.cipher.encrypt
+          .mock.calls[0];
+
+      const codeVerifier =
+        encryptCall?.[0] as
+          | string
+          | undefined;
+
+      const state =
+        encryptCall?.[2] as
+          | string
+          | undefined;
+
+      expect(
+        codeVerifier,
+      ).toEqual(
+        expect.any(String),
+      );
+
+      expect(
+        codeVerifier?.length,
+      ).toBeGreaterThan(30);
+
+      expect(
+        encryptCall?.[1],
+      ).toBe(
+        "oauth-pkce-verifier",
+      );
+
+      expect(
+        state,
+      ).toEqual(
+        expect.any(String),
+      );
+
+      expect(
+        runtime.store
+          .putOAuthTransaction,
+      ).toHaveBeenCalledTimes(1);
+
+      const transactionCall =
+        runtime.store
+          .putOAuthTransaction
+          .mock.calls[0];
+
+      const storedState =
+        transactionCall?.[0] as
+          | string
+          | undefined;
+
+      const transaction =
+        transactionCall?.[1] as
+          | Omit<
+              OAuthTransactionRecord,
+              "pk"
+            >
+          | undefined;
+
+      expect(
+        storedState,
+      ).toBe(state);
+
+      expect(
+        transaction,
+      ).toEqual({
+        kind: "oauth",
+        bindingHash:
+          expect.any(String),
+        verifierCiphertext:
+          "oauth-pkce-verifier-ciphertext",
+        nonce:
+          expect.any(String),
+        returnTo:
+          "/portfolio?tab=active",
+        expiresAt:
+          NOW + 600,
+        ttl:
+          NOW + 600,
+      });
+
+      expect(
+        runtime.cognito
+          .buildAuthorizeUrl,
+      ).toHaveBeenCalledWith(
+        state,
+        transaction?.nonce,
+        codeVerifier,
+      );
+
+      const location =
+        responseLocation(
+          response,
+        );
+
+      expect(
+        location.origin,
+      ).toBe(
+        "https://auth.example.com",
+      );
+
+      expect(
+        location.pathname,
+      ).toBe(
+        "/oauth2/authorize",
+      );
+
+      expect(
+        location.searchParams.get(
+          "state",
+        ),
+      ).toBe(state);
+
+      expect(
+        location.searchParams.get(
+          "nonce",
+        ),
+      ).toBe(
+        transaction?.nonce,
+      );
+
+      expect(
+        location.searchParams.get(
+          "code_verifier",
+        ),
+      ).toBe(
+        codeVerifier,
+      );
+
+      const cookies =
+        response.cookies ?? [];
+
+      expect(cookies).toHaveLength(1);
+
+      const cookie =
+        cookies[0];
+
+      if (!cookie) {
+        throw new Error(
+          "Expected an OAuth binding cookie.",
+        );
+      }
+
+      const cookiePrefix =
+        "__Host-sntimnt_oauth=";
+
+      expect(
+        cookie.startsWith(
+          cookiePrefix,
+        ),
+      ).toBe(true);
+
+      expect(
+        cookie,
+      ).toContain("Path=/");
+
+      expect(
+        cookie,
+      ).toContain(
+        "Max-Age=600",
+      );
+
+      expect(
+        cookie,
+      ).toContain(
+        "SameSite=Lax",
+      );
+
+      expect(
+        cookie,
+      ).toContain("Secure");
+
+      expect(
+        cookie,
+      ).toContain("HttpOnly");
+
+      const cookiePair =
+        cookie.split(";")[0];
+
+      if (
+        !cookiePair ||
+        !cookiePair.startsWith(
+          cookiePrefix,
+        )
+      ) {
+        throw new Error(
+          "Expected a valid OAuth cookie pair.",
+        );
+      }
+
+      const browserBinding =
+        cookiePair.slice(
+          cookiePrefix.length,
+        );
+
+      expect(
+        browserBinding.length,
+      ).toBeGreaterThan(20);
+
+      expect(
+        transaction?.bindingHash,
+      ).toBe(
+        sha256(
+          browserBinding,
+        ),
+      );
+
+      expect(
+        runtime.store.putSession,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the dashboard for an unsafe login return target", async () => {
+      const response =
+        await invokeHandler(
+          loginEvent(
+            "https://attacker.example/phishing",
+          ),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(303);
+
+      const transaction =
+        runtime.store
+          .putOAuthTransaction
+          .mock.calls[0]?.[1] as
+          | Omit<
+              OAuthTransactionRecord,
+              "pk"
+            >
+          | undefined;
+
+      expect(
+        transaction?.returnTo,
+      ).toBe("/dashboard");
+
+      expect(
+        response.cookies ?? [],
+      ).toHaveLength(1);
+
+      expect(
+        runtime.cognito
+          .buildAuthorizeUrl,
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    it("rate limits login before creating OAuth state", async () => {
+      runtime.store
+        .incrementRateLimit
+        .mockResolvedValueOnce(21);
+
+      const response =
+        await invokeHandler(
+          loginEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(429);
+
+      expect(
+        responseBody(
+          response,
+        ),
+      ).toEqual({
+        message:
+          "Sign-in is temporarily limited. Please wait and try again.",
+      });
+
+      const retryAfter =
+        Object.entries(
+          response.headers ?? {},
+        ).find(
+          ([name]) =>
+            name.toLowerCase() ===
+            "retry-after",
+        )?.[1];
+
+      expect(
+        String(retryAfter),
+      ).toBe("300");
+
+      expect(
+        response.cookies ?? [],
+      ).toEqual([]);
+
+      expect(
+        runtime.cipher.encrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store
+          .putOAuthTransaction,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito
+          .buildAuthorizeUrl,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when login rate-limit state is unavailable", async () => {
+      runtime.store
+        .incrementRateLimit
+        .mockRejectedValueOnce(
+          new Error(
+            "DynamoDB unavailable",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          loginEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(500);
+
+      expect(
+        responseBody(
+          response,
+        ),
+      ).toEqual({
+        message:
+          "The authentication service is temporarily unavailable.",
+      });
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "DynamoDB unavailable",
+      );
+
+      expect(
+        response.cookies ?? [],
+      ).toEqual([]);
+
+      expect(
+        runtime.cipher.encrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store
+          .putOAuthTransaction,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito
+          .buildAuthorizeUrl,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        console.error,
+      ).toHaveBeenCalledWith(
+        "auth_request_failed",
+        {
+          requestId:
+            "request-id",
+          routeKey:
+            "GET /api/auth/login",
+          errorName:
+            "Error",
+        },
+      );
+    });
+
+    it("does not issue an OAuth cookie when login transaction persistence fails", async () => {
+      runtime.store
+        .putOAuthTransaction
+        .mockRejectedValueOnce(
+          new Error(
+            "DynamoDB unavailable",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          loginEvent(
+            "/portfolio",
+          ),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(500);
+
+      expect(
+        responseBody(
+          response,
+        ),
+      ).toEqual({
+        message:
+          "The authentication service is temporarily unavailable.",
+      });
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "DynamoDB unavailable",
+      );
+
+      expect(
+        response.cookies ?? [],
+      ).toEqual([]);
+
+      expect(
+        runtime.cipher.encrypt,
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        runtime.store
+          .putOAuthTransaction,
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        runtime.cognito
+          .buildAuthorizeUrl,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.putSession,
+      ).not.toHaveBeenCalled();
+    });
     it("creates a configured administrator session from the callback Cognito MFA state", async () => {
       const response =
         await invokeHandler(
