@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -9,9 +9,6 @@ import { RoleRoute } from "@/auth/guards/RoleRoute";
 import DemoModeBanner from "@/demo-entry";
 import Index from "./pages/Index.tsx";
 import Login from "./pages/Login.tsx";
-import Register from "./pages/Register.tsx";
-import ForgotPassword from "./pages/ForgotPassword.tsx";
-import ResetPassword from "./pages/ResetPassword.tsx";
 import PendingApproval from "./pages/PendingApproval.tsx";
 import OnboardingDeposit from "./pages/OnboardingDeposit.tsx";
 import PendingFunding from "./pages/PendingFunding.tsx";
@@ -40,10 +37,10 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/create-account" element={<Register />} />
+            <Route path="/forgot-password" element={<Navigate replace to="/login" />} />
+            <Route path="/reset-password" element={<Navigate replace to="/login" />} />
+            <Route path="/register" element={<Navigate replace to="/login" />} />
+            <Route path="/create-account" element={<Navigate replace to="/login" />} />
             <Route path="/pending" element={<PendingApproval />} />
             <Route path="/pending-approval" element={<PendingApproval />} />
             <Route path="/onboarding/deposit" element={<OnboardingDeposit />} />

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router";
+import { useLocation } from "react-router";
 import {
   buildLoginEndpoint,
   loginNoticeFor,
@@ -81,8 +81,8 @@ const Login = () => {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-              Passwords and roles are never validated or stored by this page. Authentication must be
-              completed by the backend identity flow.
+              Passwords, account recovery, and registration are never handled by this page.
+              Continue to the secure identity provider.
             </div>
 
             {authMessage && (
@@ -103,24 +103,6 @@ const Login = () => {
             </button>
           </form>
 
-          <div className="mt-5 text-right">
-            <Link
-              to="/forgot-password"
-              className="text-xs text-clarity hover:underline font-medium tracking-brand"
-            >
-              Forgot password?
-            </Link>
-          </div>
-
-          <p className="mt-8 text-center text-xs text-muted-foreground">
-            Don't have an account?{" "}
-            <Link
-              to="/create-account"
-              className="text-clarity font-medium hover:underline"
-            >
-              Create account
-            </Link>
-          </p>
         </div>
         {closureBanner && (
           <div className="mt-4 text-center text-xs text-white/70">

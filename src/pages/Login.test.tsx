@@ -29,6 +29,36 @@ describe("Login", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not expose local registration or password recovery controls", () => {
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.queryByRole("link", {
+        name: /forgot password/i,
+      }),
+    ).not.toBeInTheDocument();
+
+    expect(
+      screen.queryByRole("link", {
+        name: /create account/i,
+      }),
+    ).not.toBeInTheDocument();
+
+    expect(
+      screen.queryByLabelText(/email address/i),
+    ).not.toBeInTheDocument();
+
+    expect(
+      screen.getByText(
+        /passwords, account recovery, and registration are never handled by this page/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows a generic authentication failure message", () => {
     render(
       <MemoryRouter initialEntries={["/login?reason=authentication-failed"]}>
