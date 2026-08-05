@@ -136,8 +136,10 @@ function identity(
   };
 }
 
-function oauthTransaction():
-  OAuthTransactionRecord {
+function oauthTransaction(
+  overrides:
+    Partial<OAuthTransactionRecord> = {},
+): OAuthTransactionRecord {
   return {
     pk:
       "AUTH#OAUTH#" +
@@ -151,6 +153,7 @@ function oauthTransaction():
     returnTo: "/dashboard",
     expiresAt: NOW + 600,
     ttl: NOW + 600,
+    ...overrides,
   };
 }
 
@@ -206,20 +209,59 @@ function loginEvent(
   );
 }
 
-function callbackEvent():
-  APIGatewayProxyEventV2 {
+function callbackEvent(
+  input: {
+    state?: string | null;
+    code?: string | null;
+    error?: string;
+    binding?: string | null;
+  } = {},
+): APIGatewayProxyEventV2 {
+  const state =
+    input.state === undefined
+      ? OAUTH_STATE
+      : input.state;
+
+  const code =
+    input.code === undefined
+      ? "authorization-code"
+      : input.code;
+
+  const binding =
+    input.binding === undefined
+      ? OAUTH_BINDING
+      : input.binding;
+
+  const queryStringParameters:
+    Record<string, string> = {};
+
+  if (state !== null) {
+    queryStringParameters.state =
+      state;
+  }
+
+  if (code !== null) {
+    queryStringParameters.code =
+      code;
+  }
+
+  if (input.error !== undefined) {
+    queryStringParameters.error =
+      input.error;
+  }
+
   return event(
     "GET",
     "/api/auth/callback",
     {
-      cookies: [
-        "__Host-sntimnt_oauth=" +
-          OAUTH_BINDING,
-      ],
-      queryStringParameters: {
-        state: OAUTH_STATE,
-        code: "authorization-code",
-      },
+      cookies:
+        binding === null
+          ? []
+          : [
+              "__Host-sntimnt_oauth=" +
+                binding,
+            ],
+      queryStringParameters,
     },
   );
 }
@@ -388,6 +430,89 @@ function responseLocation(
   }
 
   return new URL(location);
+}
+
+function expectClearedOAuthCookie(
+  response:
+    APIGatewayProxyStructuredResultV2,
+): void {
+  const cookies =
+    response.cookies ?? [];
+
+  expect(cookies).toHaveLength(1);
+
+  const cookie =
+    cookies[0];
+
+  if (!cookie) {
+    throw new Error(
+      "Expected a cleared OAuth cookie.",
+    );
+  }
+
+  expect(
+    cookie.startsWith(
+      "__Host-sntimnt_oauth=",
+    ),
+  ).toBe(true);
+
+  expect(cookie).toContain(
+    "Max-Age=0",
+  );
+
+  expect(cookie).toContain(
+    "Path=/",
+  );
+
+  expect(cookie).toContain(
+    "SameSite=Lax",
+  );
+
+  expect(cookie).toContain(
+    "Secure",
+  );
+
+  expect(cookie).toContain(
+    "HttpOnly",
+  );
+}
+
+function expectAuthenticationFailedRedirect(
+  response:
+    APIGatewayProxyStructuredResultV2,
+): void {
+  expect(
+    response.statusCode,
+  ).toBe(303);
+
+  expect(
+    response.body,
+  ).toBe("");
+
+  const location =
+    responseLocation(
+      response,
+    );
+
+  expect(
+    location.origin,
+  ).toBe(APP_ORIGIN);
+
+  expect(
+    location.pathname,
+  ).toBe("/login");
+
+  expect(
+    location.searchParams.get(
+      "reason",
+    ),
+  ).toBe(
+    "authentication-failed",
+  );
+
+  expectClearedOAuthCookie(
+    response,
+  );
 }
 
 function expectClearedCookies(
@@ -1057,6 +1182,294 @@ describe(
         runtime.store.putSession,
       ).not.toHaveBeenCalled();
     });
+
+    it("rejects malformed identity-provider callbacks before consuming OAuth state", async () => {
+      const response =
+        await invokeHandler(
+          callbackEvent({
+            code: null,
+            error:
+              "access_denied",
+          }),
+          context,
+        );
+
+      expectAuthenticationFailedRedirect(
+        response,
+      );
+
+      expect(
+        runtime.store
+          .consumeOAuthTransaction,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cipher.decrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito
+          .exchangeAuthorizationCode,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.putSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects a replay after the OAuth transaction was already consumed", async () => {
+      runtime.store
+        .consumeOAuthTransaction
+        .mockResolvedValueOnce(null);
+
+      const response =
+        await invokeHandler(
+          callbackEvent(),
+          context,
+        );
+
+      expectAuthenticationFailedRedirect(
+        response,
+      );
+
+      expect(
+        runtime.store
+          .consumeOAuthTransaction,
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        runtime.store
+          .consumeOAuthTransaction,
+      ).toHaveBeenCalledWith(
+        OAUTH_STATE,
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito
+          .exchangeAuthorizationCode,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.putSession,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects an expired OAuth transaction before token exchange", async () => {
+      runtime.store
+        .consumeOAuthTransaction
+        .mockResolvedValueOnce(
+          oauthTransaction({
+            expiresAt: NOW,
+            ttl: NOW,
+          }),
+        );
+
+      const response =
+        await invokeHandler(
+          callbackEvent(),
+          context,
+        );
+
+      expectAuthenticationFailedRedirect(
+        response,
+      );
+
+      expect(
+        runtime.store
+          .consumeOAuthTransaction,
+      ).toHaveBeenCalledWith(
+        OAUTH_STATE,
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito
+          .exchangeAuthorizationCode,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.putSession,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects a callback with a mismatched browser binding", async () => {
+      const response =
+        await invokeHandler(
+          callbackEvent({
+            binding:
+              "different-browser-binding",
+          }),
+          context,
+        );
+
+      expectAuthenticationFailedRedirect(
+        response,
+      );
+
+      expect(
+        runtime.store
+          .consumeOAuthTransaction,
+      ).toHaveBeenCalledWith(
+        OAUTH_STATE,
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito
+          .exchangeAuthorizationCode,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.putSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("clears OAuth state when authorization-code exchange fails", async () => {
+      runtime.cognito
+        .exchangeAuthorizationCode
+        .mockRejectedValueOnce(
+          new Error(
+            "Cognito token endpoint unavailable",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          callbackEvent(),
+          context,
+        );
+
+      expectAuthenticationFailedRedirect(
+        response,
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).toHaveBeenCalledWith(
+        "pkce-verifier-ciphertext",
+        "oauth-pkce-verifier",
+        OAUTH_STATE,
+      );
+
+      expect(
+        runtime.cognito
+          .exchangeAuthorizationCode,
+      ).toHaveBeenCalledWith(
+        "authorization-code",
+        "decrypted-secret",
+      );
+
+      expect(
+        runtime.cognito
+          .verifyIdentity,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.putSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "Cognito token endpoint unavailable",
+      );
+    });
+
+    it("revokes the issued refresh token when callback session persistence fails", async () => {
+      runtime.store.putSession
+        .mockRejectedValueOnce(
+          new Error(
+            "DynamoDB unavailable",
+          ),
+        );
+
+      const response =
+        await invokeHandler(
+          callbackEvent(),
+          context,
+        );
+
+      expectAuthenticationFailedRedirect(
+        response,
+      );
+
+      expect(
+        runtime.cognito
+          .exchangeAuthorizationCode,
+      ).toHaveBeenCalledWith(
+        "authorization-code",
+        "decrypted-secret",
+      );
+
+      expect(
+        runtime.cognito
+          .verifyIdentity,
+      ).toHaveBeenCalledWith(
+        "id-token",
+        "oauth-nonce",
+      );
+
+      expect(
+        runtime.store.putSession,
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenCalledWith(
+        "refresh-token",
+      );
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "DynamoDB unavailable",
+      );
+
+      expect(
+        response.cookies?.some(
+          (cookie) =>
+            cookie.startsWith(
+              "__Host-sntimnt_session=",
+            ),
+        ),
+      ).toBe(false);
+
+      expect(
+        response.cookies?.some(
+          (cookie) =>
+            cookie.startsWith(
+              "__Host-sntimnt_csrf=",
+            ),
+        ),
+      ).toBe(false);
+    });
+
     it("creates a configured administrator session from the callback Cognito MFA state", async () => {
       const response =
         await invokeHandler(
