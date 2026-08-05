@@ -1,22 +1,15 @@
 import { Link, useLocation } from "react-router";
+import { buildLoginPagePath, safeInternalReturnTo } from "@/auth/auth-navigation";
 
 type UnauthorizedLocationState = {
-  from?: string;
+  from?: unknown;
   reason?: "authentication-required" | "session-error";
 };
-
-function safeInternalPath(value: unknown): string {
-  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) {
-    return "/dashboard";
-  }
-
-  return value;
-}
 
 export default function Unauthorized() {
   const location = useLocation();
   const state = (location.state ?? {}) as UnauthorizedLocationState;
-  const returnTo = safeInternalPath(state.from);
+  const returnTo = safeInternalReturnTo(typeof state.from === "string" ? state.from : undefined);
   const sessionError = state.reason === "session-error";
 
   return (
@@ -32,7 +25,7 @@ export default function Unauthorized() {
             : "You must have a verified session to view this page."}
         </p>
         <Link
-          to={`/login?returnTo=${encodeURIComponent(returnTo)}`}
+          to={buildLoginPagePath(returnTo)}
           className="mt-6 inline-flex h-11 items-center justify-center rounded-lg bg-midnight px-5 text-sm font-semibold text-clarity hover:bg-midnight/90"
         >
           Continue to sign in

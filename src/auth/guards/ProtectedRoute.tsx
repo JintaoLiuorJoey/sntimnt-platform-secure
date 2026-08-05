@@ -16,7 +16,7 @@ export function ProtectedRoute() {
         to="/unauthorized"
         replace
         state={{
-          from: `${location.pathname}${location.search}`,
+          from: `${location.pathname}${location.search}${location.hash}`,
           reason: auth.status === "error" ? "session-error" : "authentication-required",
         }}
       />

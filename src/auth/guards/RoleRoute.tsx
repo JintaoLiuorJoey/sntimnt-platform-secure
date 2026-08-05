@@ -20,7 +20,10 @@ export function RoleRoute({ allowedRoles }: RoleRouteProps) {
       <Navigate
         to="/unauthorized"
         replace
-        state={{ from: `${location.pathname}${location.search}` }}
+        state={{
+          from: `${location.pathname}${location.search}${location.hash}`,
+          reason: auth.status === "error" ? "session-error" : "authentication-required",
+        }}
       />
     );
   }
@@ -31,7 +34,7 @@ export function RoleRoute({ allowedRoles }: RoleRouteProps) {
       <Navigate
         to="/forbidden"
         replace
-        state={{ from: `${location.pathname}${location.search}` }}
+        state={{ from: `${location.pathname}${location.search}${location.hash}` }}
       />
     );
   }
