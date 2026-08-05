@@ -68,6 +68,8 @@ const runtime = vi.hoisted(() => ({
       vi.fn(),
     getSession:
       vi.fn(),
+    touchSession:
+      vi.fn(),
     rotateSession:
       vi.fn(),
     deleteSession:
@@ -216,6 +218,23 @@ function refreshEvent():
   );
 }
 
+function sessionEvent(
+  authenticated = true,
+): APIGatewayProxyEventV2 {
+  return event(
+    "GET",
+    "/api/auth/session",
+    {
+      cookies: authenticated
+        ? [
+            "__Host-sntimnt_session=" +
+              SESSION_ID,
+          ]
+        : [],
+    },
+  );
+}
+
 function event(
   method: string,
   path: string,
@@ -356,6 +375,16 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue(
       session(),
+    );
+
+  runtime.store.touchSession
+    .mockReset()
+    .mockResolvedValue(
+      session({
+        lastSeenAt: NOW,
+        idleExpiresAt:
+          NOW + 1_800,
+      }),
     );
 
   runtime.store.rotateSession
@@ -857,6 +886,268 @@ describe(
         2,
         "old-refresh-token",
       );
+    });
+
+    it("rejects session reads without a session cookie", async () => {
+      const response =
+        await invokeHandler(
+          sessionEvent(false),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(401);
+
+      expect(
+        responseBody(
+          response,
+        ),
+      ).toEqual({
+        message:
+          "Authentication is required.",
+      });
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.getSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.touchSession,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing server-side session", async () => {
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          null,
+        );
+
+      const response =
+        await invokeHandler(
+          sessionEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(401);
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.getSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.store.touchSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.store.deleteSession,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("invalidates and revokes an expired session", async () => {
+      const expired =
+        session({
+          idleExpiresAt: NOW,
+        });
+
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          expired,
+        );
+
+      runtime.store.deleteSession
+        .mockResolvedValueOnce(
+          expired,
+        );
+
+      runtime.cipher.decrypt
+        .mockReset()
+        .mockResolvedValueOnce(
+          "expired-refresh-token",
+        );
+
+      const response =
+        await invokeHandler(
+          sessionEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(401);
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.deleteSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cipher.decrypt,
+      ).toHaveBeenCalledWith(
+        "old-refresh-ciphertext",
+        "cognito-refresh-token",
+        SESSION_ID,
+      );
+
+      expect(
+        runtime.cognito.revoke,
+      ).toHaveBeenCalledWith(
+        "expired-refresh-token",
+      );
+
+      expect(
+        runtime.store.touchSession,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("clears cookies when session touch loses a race", async () => {
+      const current =
+        session();
+
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.store.touchSession
+        .mockResolvedValueOnce(
+          null,
+        );
+
+      const response =
+        await invokeHandler(
+          sessionEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(401);
+
+      expectClearedCookies(
+        response,
+      );
+
+      expect(
+        runtime.store.touchSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+        current,
+        NOW,
+        NOW + 1_800,
+      );
+
+      expect(
+        runtime.store.deleteSession,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        runtime.cognito.revoke,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("returns only public session data after a successful touch", async () => {
+      const current =
+        session();
+
+      const touched =
+        session({
+          lastSeenAt: NOW,
+          idleExpiresAt:
+            NOW + 1_800,
+        });
+
+      runtime.store.getSession
+        .mockResolvedValueOnce(
+          current,
+        );
+
+      runtime.store.touchSession
+        .mockResolvedValueOnce(
+          touched,
+        );
+
+      const response =
+        await invokeHandler(
+          sessionEvent(),
+          context,
+        );
+
+      expect(
+        response.statusCode,
+      ).toBe(200);
+
+      expect(
+        runtime.store.touchSession,
+      ).toHaveBeenCalledWith(
+        SESSION_ID,
+        current,
+        NOW,
+        NOW + 1_800,
+      );
+
+      expect(
+        responseBody(
+          response,
+        ),
+      ).toEqual({
+        user: adminUser,
+        expiresAt:
+          new Date(
+            (NOW + 1_800) *
+              1_000,
+          ).toISOString(),
+        refreshAfter:
+          new Date(
+            (NOW + 300) *
+              1_000,
+          ).toISOString(),
+      });
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "adminMfaConfiguration",
+      );
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "refreshTokenCiphertext",
+      );
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "accessTokenCiphertext",
+      );
+
+      expect(
+        response.body,
+      ).not.toContain(
+        "csrfHash",
+      );
+
+      expect(
+        response.cookies ?? [],
+      ).toEqual([]);
     });
   },
 );
