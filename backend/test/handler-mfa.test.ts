@@ -462,13 +462,12 @@ describe("TOTP enrollment HTTP boundary", () => {
         "MFA enrollment is temporarily unavailable.",
     });
 
-    expect(console.error).toHaveBeenCalledWith(
-      "auth_totp_enrollment_start_failed",
-      {
-        requestId: "request-id",
-        errorName: "Error",
-      },
-    );
+    expect(console.error).toHaveBeenCalledWith({
+      event:
+        "auth_totp_enrollment_start_failed",
+      requestId: "request-id",
+      errorName: "Error",
+    });
 
     const renderedLogs = JSON.stringify(
       vi.mocked(console.error).mock.calls,

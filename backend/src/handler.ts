@@ -30,6 +30,7 @@ import {
   safeInternalReturnTo,
   sha256,
 } from "./security.js";
+import { safeSecurityLog } from "./security-log.js";
 import {
   createSessionRecord,
   isSessionExpired,
@@ -202,10 +203,15 @@ async function bestEffortRevoke(
   try {
     await cognito.revoke(refreshToken);
   } catch (error) {
-    console.error("auth_revoke_failed", {
-      requestId,
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    });
+    console.error(
+      safeSecurityLog(
+        "auth_revoke_failed",
+        {
+          requestId,
+          error,
+        },
+      ),
+    );
   }
 }
 
@@ -224,10 +230,15 @@ async function destroySession(
     );
     await bestEffortRevoke(refreshToken, requestId);
   } catch (error) {
-    console.error("auth_token_decrypt_failed", {
-      requestId,
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    });
+    console.error(
+      safeSecurityLog(
+        "auth_token_decrypt_failed",
+        {
+          requestId,
+          error,
+        },
+      ),
+    );
   }
 }
 
@@ -314,16 +325,15 @@ async function handleInvestmentAccounts(
     );
   } catch (error) {
     console.error(
-      "business_investment_accounts_failed",
-      {
-        requestId:
-          event.requestContext
-            .requestId,
-        errorName:
-          error instanceof Error
-            ? error.name
-            : "UnknownError",
-      },
+      safeSecurityLog(
+        "business_investment_accounts_failed",
+        {
+          requestId:
+            event.requestContext
+              .requestId,
+          error,
+        },
+      ),
     );
 
     return jsonResponse(
@@ -637,15 +647,14 @@ async function handleTotpEnrollmentStart(
     }
 
     console.error(
-      "auth_totp_enrollment_start_failed",
-      {
-        requestId:
-          event.requestContext.requestId,
-        errorName:
-          error instanceof Error
-            ? error.name
-            : "UnknownError",
-      },
+      safeSecurityLog(
+        "auth_totp_enrollment_start_failed",
+        {
+          requestId:
+            event.requestContext.requestId,
+          error,
+        },
+      ),
     );
 
     return jsonResponse(
@@ -742,15 +751,14 @@ async function handleTotpEnrollmentComplete(
     }
 
     console.error(
-      "auth_totp_enrollment_complete_failed",
-      {
-        requestId:
-          event.requestContext.requestId,
-        errorName:
-          error instanceof Error
-            ? error.name
-            : "UnknownError",
-      },
+      safeSecurityLog(
+        "auth_totp_enrollment_complete_failed",
+        {
+          requestId:
+            event.requestContext.requestId,
+          error,
+        },
+      ),
     );
 
     return jsonResponse(
@@ -816,11 +824,16 @@ export async function handler(
   try {
     return await route(event);
   } catch (error) {
-    console.error("auth_request_failed", {
-      requestId: context.awsRequestId,
-      routeKey: event.routeKey,
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    });
+    console.error(
+      safeSecurityLog(
+        "auth_request_failed",
+        {
+          requestId:
+            context.awsRequestId,
+          error,
+        },
+      ),
+    );
     return jsonResponse(500, { message: "The authentication service is temporarily unavailable." });
   }
 }

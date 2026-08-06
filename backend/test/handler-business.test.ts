@@ -489,15 +489,14 @@ describe(
 
         expect(
           consoleError,
-        ).toHaveBeenCalledWith(
-          "business_investment_accounts_failed",
-          {
-            requestId:
-              "api-request-id",
-            errorName:
-              "Error",
-          },
-        );
+        ).toHaveBeenCalledWith({
+          event:
+            "business_investment_accounts_failed",
+          requestId:
+            "api-request-id",
+          errorName:
+            "Error",
+        });
 
         expect(
           JSON.stringify(

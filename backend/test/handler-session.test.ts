@@ -1127,17 +1127,14 @@ describe(
 
       expect(
         console.error,
-      ).toHaveBeenCalledWith(
-        "auth_request_failed",
-        {
-          requestId:
-            "request-id",
-          routeKey:
-            "GET /api/auth/login",
-          errorName:
-            "Error",
-        },
-      );
+      ).toHaveBeenCalledWith({
+        event:
+          "auth_request_failed",
+        requestId:
+          "request-id",
+        errorName:
+          "Error",
+      });
     });
 
     it("does not issue an OAuth cookie when login transaction persistence fails", async () => {
@@ -1878,15 +1875,14 @@ describe(
 
       expect(
         console.error,
-      ).toHaveBeenCalledWith(
-        "auth_token_decrypt_failed",
-        {
-          requestId:
-            "request-id",
-          errorName:
-            "Error",
-        },
-      );
+      ).toHaveBeenCalledWith({
+        event:
+          "auth_token_decrypt_failed",
+        requestId:
+          "request-id",
+        errorName:
+          "Error",
+      });
     });
 
     it("destroys and revokes the old session when Cognito refresh fails", async () => {
