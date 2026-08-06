@@ -50,11 +50,17 @@ function block(
 describe(
   "business API infrastructure boundary",
   () => {
-    it("provides the dedicated business table name to the Lambda runtime", () => {
+    it("provides dedicated business table and KMS key identifiers to the Lambda runtime", () => {
       expect(
         template,
       ).toContain(
         "BUSINESS_TABLE_NAME: !Ref BusinessTable",
+      );
+
+      expect(
+        template,
+      ).toContain(
+        "BUSINESS_KMS_KEY_ID: !GetAtt BusinessKey.Arn",
       );
     });
 
@@ -106,7 +112,25 @@ describe(
       expect(
         functionBlock,
       ).toMatch(
-        /Action:\s*\n\s*- kms:Decrypt\s*\n\s*- kms:DescribeKey\s*\n\s*Resource: !GetAtt BusinessKey\.Arn/,
+        /Action:\s*\n\s*- kms:Encrypt\s*\n\s*- kms:Decrypt\s*\n\s*Resource: !GetAtt BusinessKey\.Arn/,
+      );
+
+      expect(
+        functionBlock,
+      ).not.toContain(
+        "kms:DescribeKey",
+      );
+
+      expect(
+        functionBlock,
+      ).not.toContain(
+        "kms:GenerateDataKey",
+      );
+
+      expect(
+        functionBlock,
+      ).not.toContain(
+        "kms:ReEncrypt",
       );
     });
 

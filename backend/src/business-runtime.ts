@@ -1,4 +1,8 @@
 import {
+  BusinessKmsCipher,
+  type BusinessKmsCipherConfig,
+} from "./business-kms-cipher.js";
+import {
   BusinessStore,
   type BusinessStoreConfig,
 } from "./business-store.js";
@@ -37,8 +41,30 @@ export function loadBusinessStoreConfig(
   });
 }
 
+export function loadBusinessKmsConfig(
+  environment:
+    NodeJS.ProcessEnv = process.env,
+): BusinessKmsCipherConfig {
+  return Object.freeze({
+    region:
+      required(
+        environment,
+        "AWS_REGION",
+      ),
+    kmsKeyId:
+      required(
+        environment,
+        "BUSINESS_KMS_KEY_ID",
+      ),
+  });
+}
+
 let cachedBusinessStore:
   | BusinessStore
+  | undefined;
+
+let cachedBusinessCipher:
+  | BusinessKmsCipher
   | undefined;
 
 export function getBusinessStore():
@@ -51,4 +77,16 @@ export function getBusinessStore():
   }
 
   return cachedBusinessStore;
+}
+
+export function getBusinessCipher():
+  BusinessKmsCipher {
+  if (!cachedBusinessCipher) {
+    cachedBusinessCipher =
+      new BusinessKmsCipher(
+        loadBusinessKmsConfig(),
+      );
+  }
+
+  return cachedBusinessCipher;
 }

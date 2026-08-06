@@ -43,6 +43,7 @@ Globals:
       Variables:
         AUTH_TABLE_NAME: !Ref AuthTable
         BUSINESS_TABLE_NAME: !Ref BusinessTable
+        BUSINESS_KMS_KEY_ID: !GetAtt BusinessKey.Arn
         AUTH_KMS_KEY_ID: !GetAtt AuthKey.Arn
         COGNITO_USER_POOL_ID: !Ref UserPool
         COGNITO_CLIENT_ID: !Ref UserPoolClient
@@ -92,8 +93,8 @@ Resources:
               Resource: !GetAtt BusinessTable.Arn
             - Effect: Allow
               Action:
+                - kms:Encrypt
                 - kms:Decrypt
-                - kms:DescribeKey
               Resource: !GetAtt BusinessKey.Arn
             - Effect: Allow
               Action:
