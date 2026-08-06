@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: SNTIMNT authentication BFF with Cognito, opaque sessions, PKCE, CSRF, and token revocation.
+Description: SNTIMNT same-origin API with secure authentication and owner-scoped business reads.
 
 Parameters:
   EnvironmentName:
@@ -42,6 +42,7 @@ Globals:
     Environment:
       Variables:
         AUTH_TABLE_NAME: !Ref AuthTable
+        BUSINESS_TABLE_NAME: !Ref BusinessTable
         AUTH_KMS_KEY_ID: !GetAtt AuthKey.Arn
         COGNITO_USER_POOL_ID: !Ref UserPool
         COGNITO_CLIENT_ID: !Ref UserPoolClient
@@ -87,6 +88,15 @@ Resources:
               Resource: !GetAtt AuthTable.Arn
             - Effect: Allow
               Action:
+                - dynamodb:Query
+              Resource: !GetAtt BusinessTable.Arn
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:DescribeKey
+              Resource: !GetAtt BusinessKey.Arn
+            - Effect: Allow
+              Action:
                 - kms:Encrypt
                 - kms:Decrypt
               Resource: !GetAtt AuthKey.Arn
@@ -97,6 +107,13 @@ Resources:
             ApiId: !Ref AuthApi
             Path: /api/auth/{proxy+}
             Method: ANY
+            PayloadFormatVersion: "2.0"
+        InvestmentAccountRoutes:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthApi
+            Path: /api/me/investment-accounts
+            Method: GET
             PayloadFormatVersion: "2.0"
     Metadata:
       BuildMethod: esbuild
@@ -131,6 +148,52 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
+
+  BusinessKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub "${EnvironmentName} SNTIMNT business-record encryption"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnableAccountAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+
+  BusinessKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/sntimnt-${EnvironmentName}-business"
+      TargetKeyId: !Ref BusinessKey
+
+  BusinessTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !GetAtt BusinessKey.Arn
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
 
   AuthKey:
     Type: AWS::KMS::Key
@@ -264,6 +327,8 @@ Resources:
 Outputs:
   AuthApiEndpoint:
     Value: !Sub "https://${AuthApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+  BusinessTableName:
+    Value: !Ref BusinessTable
   UserPoolId:
     Value: !Ref UserPool
   UserPoolClientId:

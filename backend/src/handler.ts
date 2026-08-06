@@ -4,6 +4,8 @@ import type {
   Context,
 } from "aws-lambda";
 import { adminMfaConfigurationDecision } from "./admin-mfa-policy.js";
+import { investorBusinessScope } from "./business-authorization.js";
+import { getBusinessStore } from "./business-runtime.js";
 import {
   clearAuthCookies,
   clearOAuthCookie,
@@ -246,6 +248,92 @@ async function loadSession(event: APIGatewayProxyEventV2): Promise<{
   }
 
   return { sessionId, record };
+}
+
+async function handleInvestmentAccounts(
+  event: APIGatewayProxyEventV2,
+) {
+  try {
+    const loaded =
+      await loadSession(event);
+
+    if (!loaded) {
+      return jsonResponse(
+        401,
+        {
+          message:
+            "Authentication is required.",
+        },
+        clearAuthCookies(config),
+      );
+    }
+
+    const authorization =
+      investorBusinessScope(
+        loaded.record,
+      );
+
+    if (
+      authorization.status ===
+      "authentication-required"
+    ) {
+      return jsonResponse(
+        401,
+        {
+          message:
+            "Authentication is required.",
+        },
+        clearAuthCookies(config),
+      );
+    }
+
+    if (
+      authorization.status ===
+      "forbidden"
+    ) {
+      return jsonResponse(
+        403,
+        {
+          message:
+            "The requested resource is not permitted.",
+        },
+      );
+    }
+
+    const accounts =
+      await getBusinessStore()
+        .listInvestmentAccounts(
+          authorization,
+        );
+
+    return jsonResponse(
+      200,
+      {
+        accounts,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "business_investment_accounts_failed",
+      {
+        requestId:
+          event.requestContext
+            .requestId,
+        errorName:
+          error instanceof Error
+            ? error.name
+            : "UnknownError",
+      },
+    );
+
+    return jsonResponse(
+      503,
+      {
+        message:
+          "Investment account data is temporarily unavailable.",
+      },
+    );
+  }
 }
 
 async function handleSession(event: APIGatewayProxyEventV2) {
@@ -690,6 +778,15 @@ async function handleLogout(event: APIGatewayProxyEventV2) {
 async function route(event: APIGatewayProxyEventV2) {
   const method = event.requestContext.http.method.toUpperCase();
   const path = event.rawPath;
+
+  if (
+    method === "GET" &&
+    path === "/api/me/investment-accounts"
+  ) {
+    return handleInvestmentAccounts(
+      event,
+    );
+  }
 
   if (method === "GET" && path === "/api/auth/login") return handleLogin(event);
   if (method === "GET" && path === "/api/auth/callback") return handleCallback(event);
