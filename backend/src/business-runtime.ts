@@ -1,4 +1,8 @@
 import {
+  BusinessDeletionControlPersistence,
+  type BusinessDeletionControlPersistenceConfig,
+} from "./business-deletion-control-persistence.js";
+import {
   BusinessKmsCipher,
   type BusinessKmsCipherConfig,
 } from "./business-kms-cipher.js";
@@ -59,12 +63,34 @@ export function loadBusinessKmsConfig(
   });
 }
 
+export function loadBusinessDeletionControlPersistenceConfig(
+  environment:
+    NodeJS.ProcessEnv = process.env,
+): BusinessDeletionControlPersistenceConfig {
+  return Object.freeze({
+    region:
+      required(
+        environment,
+        "AWS_REGION",
+      ),
+    tableName:
+      required(
+        environment,
+        "DELETION_CONTROL_TABLE_NAME",
+      ),
+  });
+}
+
 let cachedBusinessStore:
   | BusinessStore
   | undefined;
 
 let cachedBusinessCipher:
   | BusinessKmsCipher
+  | undefined;
+
+let cachedBusinessDeletionControlPersistence:
+  | BusinessDeletionControlPersistence
   | undefined;
 
 export function getBusinessStore():
@@ -89,4 +115,18 @@ export function getBusinessCipher():
   }
 
   return cachedBusinessCipher;
+}
+
+export function getBusinessDeletionControlPersistence():
+  BusinessDeletionControlPersistence {
+  if (
+    !cachedBusinessDeletionControlPersistence
+  ) {
+    cachedBusinessDeletionControlPersistence =
+      new BusinessDeletionControlPersistence(
+        loadBusinessDeletionControlPersistenceConfig(),
+      );
+  }
+
+  return cachedBusinessDeletionControlPersistence;
 }

@@ -1,9 +1,15 @@
 import {
+  DynamoDBClient,
+} from "@aws-sdk/client-dynamodb";
+import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 import {
+  getBusinessDeletionControlPersistence,
+  loadBusinessDeletionControlPersistenceConfig,
   loadBusinessKmsConfig,
   loadBusinessStoreConfig,
 } from "../src/business-runtime.js";
@@ -143,6 +149,127 @@ describe(
       expect(
         Object.isFrozen(config),
       ).toBe(true);
+    });
+  },
+);
+
+describe(
+  "deletion control persistence runtime configuration",
+  () => {
+    it("loads a trimmed region and dedicated deletion-control table name", () => {
+      expect(
+        loadBusinessDeletionControlPersistenceConfig({
+          AWS_REGION:
+            " us-east-1 ",
+          DELETION_CONTROL_TABLE_NAME:
+            " deletion-control-table ",
+        }),
+      ).toEqual({
+        region:
+          "us-east-1",
+        tableName:
+          "deletion-control-table",
+      });
+    });
+
+    it.each([
+      "AWS_REGION",
+      "DELETION_CONTROL_TABLE_NAME",
+    ] as const)(
+      "requires %s",
+      (
+        name:
+          | "AWS_REGION"
+          | "DELETION_CONTROL_TABLE_NAME",
+      ) => {
+        const environment:
+          Partial<
+            Record<
+              | "AWS_REGION"
+              | "DELETION_CONTROL_TABLE_NAME",
+              string
+            >
+          > = {
+            AWS_REGION:
+              "us-east-1",
+            DELETION_CONTROL_TABLE_NAME:
+              "deletion-control-table",
+          };
+
+        delete environment[name];
+
+        expect(() =>
+          loadBusinessDeletionControlPersistenceConfig(
+            environment,
+          ),
+        ).toThrow(
+          `${name} is required.`,
+        );
+      },
+    );
+
+    it("returns an immutable deletion-control configuration object", () => {
+      const config =
+        loadBusinessDeletionControlPersistenceConfig({
+          AWS_REGION:
+            "us-east-1",
+          DELETION_CONTROL_TABLE_NAME:
+            "deletion-control-table",
+        });
+
+      expect(
+        Object.isFrozen(config),
+      ).toBe(true);
+    });
+
+    it("caches one adapter per warm process without sending a DynamoDB request during construction", () => {
+      const previousRegion =
+        process.env.AWS_REGION;
+      const previousTable =
+        process.env.DELETION_CONTROL_TABLE_NAME;
+      const send =
+        vi.spyOn(
+          DynamoDBClient.prototype,
+          "send",
+        );
+
+      try {
+        process.env.AWS_REGION =
+          "us-east-1";
+        process.env.DELETION_CONTROL_TABLE_NAME =
+          "deletion-control-table";
+
+        const first =
+          getBusinessDeletionControlPersistence();
+        const second =
+          getBusinessDeletionControlPersistence();
+
+        expect(first).toBe(second);
+        expect(send).not.toHaveBeenCalled();
+      }
+      finally {
+        send.mockRestore();
+
+        if (
+          previousRegion === undefined
+        ) {
+          delete process.env.AWS_REGION;
+        }
+        else {
+          process.env.AWS_REGION =
+            previousRegion;
+        }
+
+        if (
+          previousTable === undefined
+        ) {
+          delete process.env.DELETION_CONTROL_TABLE_NAME;
+        }
+        else {
+          process.env.DELETION_CONTROL_TABLE_NAME =
+            previousTable;
+        }
+      }
     });
   },
 );
