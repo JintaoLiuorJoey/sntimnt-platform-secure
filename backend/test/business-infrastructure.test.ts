@@ -228,7 +228,7 @@ describe(
       );
     });
 
-    it("defines a dedicated retained rotating KMS key for deletion-control storage", () => {
+    it("defines a dedicated retained rotating KMS key with DynamoDB-only service authorization", () => {
       const keyBlock =
         block(
           "  DeletionControlKey:",
@@ -257,6 +257,48 @@ describe(
         keyBlock,
       ).toContain(
         "EnableKeyRotation: true",
+      );
+
+      expect(
+        keyBlock,
+      ).toContain(
+        "Sid: AllowDynamoDbUseFromThisAccount",
+      );
+
+      for (
+        const action of
+        [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey",
+          "kms:CreateGrant",
+        ]
+      ) {
+        expect(
+          keyBlock,
+        ).toContain(
+          `- ${action}`,
+        );
+      }
+
+      expect(
+        keyBlock,
+      ).toContain(
+        'AWS: "*"',
+      );
+
+      expect(
+        keyBlock,
+      ).toContain(
+        "kms:CallerAccount: !Ref AWS::AccountId",
+      );
+
+      expect(
+        keyBlock,
+      ).toContain(
+        'kms:ViaService: !Sub "dynamodb.*.${AWS::URLSuffix}"',
       );
 
       expect(
@@ -358,7 +400,13 @@ describe(
       );
     });
 
-    it("keeps deletion-control infrastructure disconnected from the Lambda and BusinessTable write path", () => {
+    it("binds deletion-control persistence only to AuthFunction with least-privilege table permissions", () => {
+      const globalsBlock =
+        block(
+          "Globals:",
+          "\nResources:",
+        );
+
       const functionBlock =
         block(
           "  AuthFunction:",
@@ -366,27 +414,84 @@ describe(
         );
 
       expect(
+        globalsBlock,
+      ).not.toContain(
+        "DELETION_CONTROL_TABLE_NAME",
+      );
+
+      expect(
+        functionBlock,
+      ).toContain(
+        "DELETION_CONTROL_TABLE_NAME: !Ref DeletionControlTable",
+      );
+
+      const deletionControlStatement =
+        functionBlock.match(
+          /- Effect: Allow\s*\n\s*Action:\s*\n(?:\s*- dynamodb:[A-Za-z]+\s*\n)+\s*Resource: !GetAtt DeletionControlTable\.Arn/,
+        )?.[0];
+
+      expect(
+        deletionControlStatement,
+      ).toBeDefined();
+
+      expect(
+        deletionControlStatement,
+      ).toContain(
+        "dynamodb:GetItem",
+      );
+
+      expect(
+        deletionControlStatement,
+      ).toContain(
+        "dynamodb:PutItem",
+      );
+
+      expect(
+        deletionControlStatement,
+      ).toContain(
+        "dynamodb:UpdateItem",
+      );
+
+      for (
+        const forbiddenAction of
+        [
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:BatchWriteItem",
+          "dynamodb:ConditionCheckItem",
+          "dynamodb:TransactWriteItems",
+        ]
+      ) {
+        expect(
+          deletionControlStatement,
+        ).not.toContain(
+          forbiddenAction,
+        );
+      }
+
+      expect(
         functionBlock,
       ).not.toContain(
-        "DELETION_CONTROL_TABLE",
+        "Resource: !GetAtt DeletionControlKey.Arn",
       );
 
       expect(
         functionBlock,
       ).not.toContain(
-        "DeletionControlTable",
+        "kms:CreateGrant",
       );
 
       expect(
         functionBlock,
       ).not.toContain(
-        "DeletionControlKey",
+        "kms:GenerateDataKey",
       );
 
       expect(
         functionBlock,
       ).not.toContain(
-        "dynamodb:ConditionCheckItem",
+        "kms:ReEncrypt",
       );
 
       expect(

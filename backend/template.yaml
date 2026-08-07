@@ -73,6 +73,9 @@ Resources:
     Properties:
       CodeUri: .
       Handler: src/handler.handler
+      Environment:
+        Variables:
+          DELETION_CONTROL_TABLE_NAME: !Ref DeletionControlTable
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -91,6 +94,12 @@ Resources:
               Action:
                 - dynamodb:Query
               Resource: !GetAtt BusinessTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt DeletionControlTable.Arn
             - Effect: Allow
               Action:
                 - kms:Encrypt
@@ -235,6 +244,23 @@ Resources:
               AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
             Action: "kms:*"
             Resource: "*"
+          - Sid: AllowDynamoDbUseFromThisAccount
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+              - kms:CreateGrant
+            Resource: "*"
+            Condition:
+              StringEquals:
+                kms:CallerAccount: !Ref AWS::AccountId
+              StringLike:
+                kms:ViaService: !Sub "dynamodb.*.${AWS::URLSuffix}"
 
   DeletionControlKeyAlias:
     Type: AWS::KMS::Alias
