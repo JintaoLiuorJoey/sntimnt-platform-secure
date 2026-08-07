@@ -227,5 +227,179 @@ describe(
         'AliasName: !Sub "alias/sntimnt-${EnvironmentName}-business"',
       );
     });
+
+    it("defines a dedicated retained rotating KMS key for deletion-control storage", () => {
+      const keyBlock =
+        block(
+          "  DeletionControlKey:",
+          "\n  DeletionControlKeyAlias:",
+        );
+
+      const aliasBlock =
+        block(
+          "  DeletionControlKeyAlias:",
+          "\n  DeletionControlTable:",
+        );
+
+      expect(
+        keyBlock,
+      ).toContain(
+        "DeletionPolicy: Retain",
+      );
+
+      expect(
+        keyBlock,
+      ).toContain(
+        "UpdateReplacePolicy: Retain",
+      );
+
+      expect(
+        keyBlock,
+      ).toContain(
+        "EnableKeyRotation: true",
+      );
+
+      expect(
+        aliasBlock,
+      ).toContain(
+        'AliasName: !Sub "alias/sntimnt-${EnvironmentName}-deletion-control"',
+      );
+    });
+
+    it("defines a retained KMS-encrypted PITR deletion-control table with cleanup-only TTL infrastructure", () => {
+      const tableBlock =
+        block(
+          "  DeletionControlTable:",
+          "\n  UserPool:",
+        );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "DeletionPolicy: Retain",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "UpdateReplacePolicy: Retain",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "BillingMode: PAY_PER_REQUEST",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "AttributeName: pk",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "AttributeName: sk",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "KeyType: HASH",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "KeyType: RANGE",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "KMSMasterKeyId: !GetAtt DeletionControlKey.Arn",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "PointInTimeRecoveryEnabled: true",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "TimeToLiveSpecification:",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "AttributeName: ttl",
+      );
+
+      expect(
+        tableBlock,
+      ).toContain(
+        "Enabled: true",
+      );
+
+      expect(
+        tableBlock,
+      ).not.toContain(
+        "GlobalSecondaryIndexes:",
+      );
+
+      expect(
+        tableBlock,
+      ).not.toContain(
+        "LocalSecondaryIndexes:",
+      );
+    });
+
+    it("keeps deletion-control infrastructure disconnected from the Lambda and BusinessTable write path", () => {
+      const functionBlock =
+        block(
+          "  AuthFunction:",
+          "\n  AuthTable:",
+        );
+
+      expect(
+        functionBlock,
+      ).not.toContain(
+        "DELETION_CONTROL_TABLE",
+      );
+
+      expect(
+        functionBlock,
+      ).not.toContain(
+        "DeletionControlTable",
+      );
+
+      expect(
+        functionBlock,
+      ).not.toContain(
+        "DeletionControlKey",
+      );
+
+      expect(
+        functionBlock,
+      ).not.toContain(
+        "dynamodb:ConditionCheckItem",
+      );
+
+      expect(
+        functionBlock,
+      ).toMatch(
+        /Action:\s*\n\s*- dynamodb:Query\s*\n\s*Resource: !GetAtt BusinessTable\.Arn/,
+      );
+
+      expect(
+        functionBlock,
+      ).not.toContain(
+        "dynamodb:Scan",
+      );
+    });
   },
 );
