@@ -2217,6 +2217,39 @@ export class BusinessDeletionControlPersistence {
     return record;
   }
 
+  async getTerminalEvidence(
+    operationId:
+      string,
+  ): Promise<
+    BusinessDeletionControlTerminalEvidenceRecord |
+    null
+  > {
+    const key =
+      exactEvidenceKey(
+        canonicalOperationId(
+          operationId,
+        ),
+      );
+
+    const record =
+      await this.getByKey(
+        key,
+      );
+
+    if (!record) {
+      return null;
+    }
+
+    if (
+      record.kind !==
+      "terminal-evidence"
+    ) {
+      throw new BusinessDeletionControlPersistenceDataIntegrityError();
+    }
+
+    return record;
+  }
+
   async createOperationAndClaim(
     operation:
       BusinessDeletionControlOperationRoot,
@@ -2370,6 +2403,155 @@ export class BusinessDeletionControlPersistence {
           CREATE_ONLY_CONDITION,
         ExpressionAttributeNames:
           CREATE_ONLY_NAMES,
+      }),
+    );
+  }
+
+  async finalizeOperationAndTerminalEvidence(
+    guard:
+      BusinessDeletionControlOperationMutationGuard,
+    next:
+      BusinessDeletionControlOperationRoot,
+    evidence:
+      BusinessDeletionControlTerminalEvidenceRecord,
+  ): Promise<void> {
+    assertOperationMutation(
+      guard,
+      next,
+    );
+
+    const validatedOperation =
+      validateOperation(
+        next,
+      );
+
+    const validatedEvidence =
+      validateTerminalEvidence(
+        evidence,
+      );
+
+    if (
+      validatedOperation.state !==
+        "completed" ||
+      !validatedOperation.terminalAt ||
+      validatedOperation.completedComponentCount !==
+        validatedOperation.expectedComponentCount ||
+      validatedOperation.operationId !==
+        validatedEvidence.operationId ||
+      validatedOperation.manifestIntegrityDigest !==
+        validatedEvidence.manifestIntegrityDigest ||
+      validatedOperation.policyVersion !==
+        validatedEvidence.policyVersion ||
+      validatedOperation.topologyVersion !==
+        validatedEvidence.topologyVersion ||
+      validatedOperation.expectedComponentCount !==
+        validatedEvidence.expectedComponentCount ||
+      validatedEvidence.deletedComponentCount !==
+        validatedOperation.expectedComponentCount ||
+      validatedEvidence.completedAt !==
+        validatedOperation.terminalAt
+    ) {
+      throw new BusinessDeletionControlPersistenceDataIntegrityError();
+    }
+
+    const evidenceItem =
+      persistedItem(
+        validatedEvidence,
+      );
+
+    if (TTL_ATTRIBUTE in evidenceItem) {
+      throw new BusinessDeletionControlPersistenceDataIntegrityError();
+    }
+
+    assertDistinctKeys(
+      validatedOperation,
+      validatedEvidence,
+    );
+
+    await this.sendConditionalWrite(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName:
+                this.config.tableName,
+              Key:
+                keyItem(
+                  exactOperationKey(
+                    guard.operationId,
+                  ),
+                ),
+              ConditionExpression:
+                "attribute_exists(#pk) AND attribute_exists(#sk) AND #kind = :kind AND #state = :expectedState AND #stateVersion = :expectedStateVersion AND #legalHoldVersion = :expectedLegalHoldVersion",
+              UpdateExpression:
+                "SET #recordJson = :recordJson, #state = :nextState, #stateVersion = :nextStateVersion, #legalHoldVersion = :nextLegalHoldVersion",
+              ExpressionAttributeNames: {
+                "#pk":
+                  "pk",
+                "#sk":
+                  "sk",
+                "#kind":
+                  "kind",
+                "#recordJson":
+                  RECORD_JSON_ATTRIBUTE,
+                "#state":
+                  "state",
+                "#stateVersion":
+                  "stateVersion",
+                "#legalHoldVersion":
+                  "legalHoldVersion",
+              },
+              ExpressionAttributeValues: {
+                ":kind":
+                  stringValue(
+                    "operation-root",
+                  ),
+                ":expectedState":
+                  stringValue(
+                    guard.expectedState,
+                  ),
+                ":expectedStateVersion":
+                  numberValue(
+                    guard.expectedStateVersion,
+                  ),
+                ":expectedLegalHoldVersion":
+                  numberValue(
+                    guard.expectedLegalHoldVersion,
+                  ),
+                ":recordJson":
+                  stringValue(
+                    recordJson(
+                      validatedOperation,
+                    ),
+                  ),
+                ":nextState":
+                  stringValue(
+                    validatedOperation.state,
+                  ),
+                ":nextStateVersion":
+                  numberValue(
+                    validatedOperation.stateVersion,
+                  ),
+                ":nextLegalHoldVersion":
+                  numberValue(
+                    validatedOperation.legalHoldVersion,
+                  ),
+              },
+            },
+          },
+          {
+            Put: {
+              TableName:
+                this.config.tableName,
+              Item:
+                evidenceItem,
+              ConditionExpression:
+                CREATE_ONLY_CONDITION,
+              ExpressionAttributeNames:
+                CREATE_ONLY_NAMES,
+            },
+          },
+        ],
       }),
     );
   }

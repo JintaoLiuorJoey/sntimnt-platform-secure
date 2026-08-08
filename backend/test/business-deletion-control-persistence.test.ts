@@ -196,7 +196,10 @@ function progress(
   };
 }
 
-function terminalEvidence(): BusinessDeletionControlTerminalEvidenceRecord {
+function terminalEvidence(
+  overrides:
+    Partial<BusinessDeletionControlTerminalEvidenceRecord> = {},
+): BusinessDeletionControlTerminalEvidenceRecord {
   return {
     pk:
       `DEL#OP#${operationId}`,
@@ -229,6 +232,7 @@ function terminalEvidence(): BusinessDeletionControlTerminalEvidenceRecord {
       "active-store-only-pitr-backups-and-exports-may-retain-until-expiry",
     retentionMode:
       "audit-policy-retained",
+    ...overrides,
   };
 }
 
@@ -262,7 +266,8 @@ function storedItem(
   record:
     | BusinessDeletionControlOperationRoot
     | BusinessDeletionControlIdempotencyClaim
-    | BusinessDeletionControlProgressRecord,
+    | BusinessDeletionControlProgressRecord
+    | BusinessDeletionControlTerminalEvidenceRecord,
 ): Item {
   const item:
     Item = {
@@ -406,6 +411,16 @@ function storedItem(
           record.lease.tokenDigest,
       };
     }
+  }
+
+  if (
+    record.kind ===
+    "terminal-evidence"
+  ) {
+    item.manifestIntegrityDigest = {
+      S:
+        record.manifestIntegrityDigest,
+    };
   }
 
   return item;
@@ -1053,6 +1068,251 @@ describe(
       ).not.toHaveProperty(
         "ttl",
       );
+    });
+
+    it("gets terminal evidence by exact opaque key with a strongly consistent GetItem", async () => {
+      const expected =
+        terminalEvidence();
+
+      const send =
+        vi.fn()
+          .mockResolvedValue({
+            Item:
+              storedItem(
+                expected,
+              ),
+          });
+
+      const store =
+        storeWith(
+          send,
+        );
+
+      await expect(
+        store.getTerminalEvidence(
+          operationId,
+        ),
+      ).resolves.toEqual(
+        expected,
+      );
+
+      const command =
+        commandFrom(
+          send,
+        );
+
+      expect(
+        command,
+      ).toBeInstanceOf(
+        GetItemCommand,
+      );
+
+      if (
+        !(
+          command instanceof
+          GetItemCommand
+        )
+      ) {
+        throw new Error(
+          "Expected GetItemCommand.",
+        );
+      }
+
+      expect(
+        command.input,
+      ).toEqual({
+        TableName:
+          tableName,
+        Key: {
+          pk: {
+            S:
+              `DEL#OP#${operationId}`,
+          },
+          sk: {
+            S:
+              "EVIDENCE",
+          },
+        },
+        ConsistentRead:
+          true,
+      });
+    });
+
+    it("atomically completes the operation and creates terminal evidence", async () => {
+      const send =
+        vi.fn()
+          .mockResolvedValue({});
+
+      const store =
+        storeWith(
+          send,
+        );
+
+      const completedAt =
+        "2026-08-07T12:10:00.000Z";
+
+      const next =
+        operation({
+          state:
+            "completed",
+          stateVersion:
+            5,
+          completedComponentCount:
+            2,
+          updatedAt:
+            completedAt,
+          terminalAt:
+            completedAt,
+          retireAfter:
+            "2026-11-05T12:10:00.000Z",
+        });
+
+      await store.finalizeOperationAndTerminalEvidence(
+        {
+          operationId,
+          expectedState:
+            "partially-complete",
+          expectedStateVersion:
+            4,
+          expectedLegalHoldVersion:
+            1,
+        },
+        next,
+        terminalEvidence(),
+      );
+
+      const command =
+        commandFrom(
+          send,
+        );
+
+      expect(
+        command,
+      ).toBeInstanceOf(
+        TransactWriteItemsCommand,
+      );
+
+      if (
+        !(
+          command instanceof
+          TransactWriteItemsCommand
+        )
+      ) {
+        throw new Error(
+          "Expected TransactWriteItemsCommand.",
+        );
+      }
+
+      expect(
+        command.input.TransactItems,
+      ).toHaveLength(2);
+
+      const update =
+        command.input.TransactItems?.[0]?.Update;
+
+      const put =
+        command.input.TransactItems?.[1]?.Put;
+
+      expect(update?.TableName).toBe(
+        tableName,
+      );
+
+      expect(
+        update?.ConditionExpression,
+      ).toBe(
+        "attribute_exists(#pk) AND attribute_exists(#sk) AND #kind = :kind AND #state = :expectedState AND #stateVersion = :expectedStateVersion AND #legalHoldVersion = :expectedLegalHoldVersion",
+      );
+
+      expect(
+        update?.ExpressionAttributeValues,
+      ).toMatchObject({
+        ":expectedState": {
+          S:
+            "partially-complete",
+        },
+        ":expectedStateVersion": {
+          N:
+            "4",
+        },
+        ":nextState": {
+          S:
+            "completed",
+        },
+        ":nextStateVersion": {
+          N:
+            "5",
+        },
+      });
+
+      expect(put?.TableName).toBe(
+        tableName,
+      );
+
+      expect(
+        put?.ConditionExpression,
+      ).toBe(
+        "attribute_not_exists(#pk) AND attribute_not_exists(#sk)",
+      );
+
+      expect(
+        put?.Item,
+      ).not.toHaveProperty(
+        "ttl",
+      );
+    });
+
+    it("rejects an atomic finalization whose evidence does not match the completed operation", async () => {
+      const send =
+        vi.fn();
+
+      const store =
+        storeWith(
+          send,
+        );
+
+      const completedAt =
+        "2026-08-07T12:10:00.000Z";
+
+      const next =
+        operation({
+          state:
+            "completed",
+          stateVersion:
+            5,
+          completedComponentCount:
+            2,
+          updatedAt:
+            completedAt,
+          terminalAt:
+            completedAt,
+          retireAfter:
+            "2026-11-05T12:10:00.000Z",
+        });
+
+      await expect(
+        store.finalizeOperationAndTerminalEvidence(
+          {
+            operationId,
+            expectedState:
+              "partially-complete",
+            expectedStateVersion:
+              4,
+            expectedLegalHoldVersion:
+              1,
+          },
+          next,
+          terminalEvidence({
+            manifestIntegrityDigest:
+              "f".repeat(64),
+          }),
+        ),
+      ).rejects.toBeInstanceOf(
+        BusinessDeletionControlPersistenceDataIntegrityError,
+      );
+
+      expect(
+        send,
+      ).not.toHaveBeenCalled();
     });
 
     it("maps retirement-marker ttlEpochSeconds to the table cleanup ttl attribute", async () => {
