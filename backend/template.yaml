@@ -400,6 +400,38 @@ Resources:
       Description: Administrative access. MFA enforcement is completed in the next hardening stage.
       Precedence: 10
 
+  BusinessDeletionExecutorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: BusinessDeletionExecutorDeleteOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DeleteBusinessItemsInTransactionsOnly
+                Effect: Allow
+                Action:
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt BusinessTable.Arn
+                Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - "BUSINESS#OWNER#*"
+                  StringEqualsIfExists:
+                    dynamodb:ReturnValues:
+                      - NONE
 Outputs:
   AuthApiEndpoint:
     Value: !Sub "https://${AuthApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"

@@ -134,6 +134,117 @@ describe(
       );
     });
 
+    it("defines an unattached transaction-only business deletion executor role", () => {
+      const roleBlock =
+        block(
+          "  BusinessDeletionExecutorRole:",
+          "\nOutputs:",
+        );
+
+      expect(
+        roleBlock,
+      ).toContain(
+        "Type: AWS::IAM::Role",
+      );
+
+      expect(
+        roleBlock,
+      ).toMatch(
+        /Principal:\s*\n\s*Service:\s*\n\s*- lambda\.amazonaws\.com\s*\n\s*Action:\s*\n\s*- sts:AssumeRole/,
+      );
+
+      expect(
+        roleBlock,
+      ).toMatch(
+        /Action:\s*\n\s*- dynamodb:DeleteItem\s*\n\s*Resource: !GetAtt BusinessTable\.Arn/,
+      );
+
+      expect(
+        roleBlock,
+      ).toMatch(
+        /ForAnyValue:StringEquals:\s*\n\s*dynamodb:EnclosingOperation:\s*\n\s*- TransactWriteItems/,
+      );
+
+      expect(
+        roleBlock,
+      ).toMatch(
+        /ForAllValues:StringLike:\s*\n\s*dynamodb:LeadingKeys:\s*\n\s*- "BUSINESS#OWNER#\*"/,
+      );
+
+      expect(
+        roleBlock,
+      ).toMatch(
+        /StringEqualsIfExists:\s*\n\s*dynamodb:ReturnValues:\s*\n\s*- NONE/,
+      );
+
+      for (
+        const forbidden of
+        [
+          "ManagedPolicyArns:",
+          "dynamodb:ConditionCheckItem",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:BatchWriteItem",
+          "dynamodb:TransactWriteItems",
+          "dynamodb:PartiQLDelete",
+          "dynamodb:*",
+          "AuthTable.Arn",
+          "DeletionControlTable.Arn",
+        ]
+      ) {
+        expect(
+          roleBlock,
+        ).not.toContain(
+          forbidden,
+        );
+      }
+
+      expect(
+        roleBlock,
+      ).not.toMatch(
+        /Resource:\s*["']?\*["']?/,
+      );
+
+      const functionBlock =
+        block(
+          "  AuthFunction:",
+          "\n  AuthTable:",
+        );
+
+      const businessTableActionBlocks =
+        functionBlock.match(
+          /Action:\s*\n(?:\s*-\s*dynamodb:[^\n]+\n)+\s*Resource: !GetAtt BusinessTable\.Arn/g,
+        ) ?? [];
+
+      expect(
+        businessTableActionBlocks,
+      ).toEqual([
+        "Action:\n" +
+          "                - dynamodb:Query\n" +
+          "              Resource: !GetAtt BusinessTable.Arn",
+      ]);
+
+      expect(
+        template,
+      ).not.toContain(
+        "Role: !GetAtt BusinessDeletionExecutorRole.Arn",
+      );
+
+      expect(
+        template,
+      ).not.toContain(
+        "Role: !Ref BusinessDeletionExecutorRole",
+      );
+
+      expect(
+        template.match(
+          /BusinessDeletionExecutorRole/g,
+        ),
+      ).toHaveLength(1);
+    });
     it("defines a retained point-in-time-recoverable owner-partitioned business table", () => {
       const tableBlock =
         block(
