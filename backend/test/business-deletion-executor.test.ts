@@ -20,7 +20,10 @@ import {
   BUSINESS_DELETION_EXECUTOR_BOUNDARY,
   BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION,
   createManifestBoundBusinessDeletionExecutionPort,
-  type BusinessDeletionDynamoDbAdapter,
+  type BusinessDeletionAbsenceVerifier,
+  type BusinessDeletionDynamoDbTransactionAdapterInput,
+  type BusinessDeletionDynamoDbAbsenceVerifierInput,
+  type BusinessDeletionDynamoDbTransactionAdapter,
   type BusinessDeletionExternalAdapter,
 } from "../src/business-deletion-executor.js";
 import {
@@ -232,23 +235,93 @@ function adapters() {
       .mockImplementation(
         async (
           input:
-            {
-              targets:
-                readonly {
-                  componentId:
-                    string;
-                }[];
-            },
+            BusinessDeletionDynamoDbTransactionAdapterInput,
         ) => ({
           outcome:
-            "verified-complete",
-          completedComponentIds:
+            "transaction-accepted",
+          operationId:
+            OPERATION_ID,
+          manifestIntegrityDigest:
+            input.manifestIntegrityDigest,
+          stepIndex:
+            input.stepIndex,
+          stepId:
+            input.stepId,
+          attemptTokenDigest:
+            input.attemptTokenDigest,
+          componentIds:
             input.targets.map(
               (
                 target,
               ) =>
                 target.componentId,
             ),
+          awsAccountId:
+            input.targets[0]!.awsAccountId,
+          awsRegion:
+            input.targets[0]!.awsRegion,
+          transactionRequestDigest:
+            input.transactionRequestDigest,
+          acceptedAt:
+            VERIFIED_AT,
+        }),
+      );
+
+  const verifyAbsent =
+    vi.fn()
+      .mockImplementation(
+        async (
+          input:
+            {
+              operationId:
+                string;
+              manifestIntegrityDigest:
+                string;
+              stepIndex:
+                number;
+              stepId:
+                string;
+              attemptTokenDigest:
+                string;
+              targets:
+                readonly {
+                  componentId:
+                    string;
+                  awsAccountId:
+                    string;
+                  awsRegion:
+                    string;
+                }[];
+              transactionReceipt:
+                {
+                  transactionRequestDigest:
+                    string;
+                };
+            },
+        ) => ({
+          outcome:
+            "absence-verified",
+          operationId:
+            input.operationId,
+          manifestIntegrityDigest:
+            input.manifestIntegrityDigest,
+          stepIndex:
+            input.stepIndex,
+          stepId:
+            input.stepId,
+          attemptTokenDigest:
+            input.attemptTokenDigest,
+          componentIds:
+            input.targets.map(
+              (target) =>
+                target.componentId,
+            ),
+          awsAccountId:
+            input.targets[0]!.awsAccountId,
+          awsRegion:
+            input.targets[0]!.awsRegion,
+          transactionRequestDigest:
+            input.transactionReceipt.transactionRequestDigest,
           verifiedAt:
             VERIFIED_AT,
         }),
@@ -279,11 +352,15 @@ function adapters() {
 
   return {
     dynamoExecute,
+    verifyAbsent,
     externalExecute,
     dynamoDbAdapter: {
       execute:
         dynamoExecute,
-    } as BusinessDeletionDynamoDbAdapter,
+    } as BusinessDeletionDynamoDbTransactionAdapter,
+    dynamoDbAbsenceVerifier: {
+      verifyAbsent,
+    } as BusinessDeletionAbsenceVerifier,
     externalAdapter: {
       execute:
         externalExecute,
@@ -299,7 +376,7 @@ describe(
       () => {
         expect(
           BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION,
-        ).toBe(1);
+        ).toBe(2);
 
         expect(
           BUSINESS_DELETION_EXECUTOR_BOUNDARY,
@@ -315,11 +392,13 @@ describe(
           rawLocatorResolution:
             "executor-boundary-only",
           dynamoDbAdapter:
-            "dependency-injected-contract-only",
+            "transaction-receipt-contract-only",
+          dynamoDbAbsenceVerifier:
+            "independent-read-only-contract-only",
           externalAdapter:
             "dependency-injected-contract-only",
           adapterCompletion:
-            "verified-complete-exact-component-set",
+            "receipt-plus-absence-verification",
           persistence:
             false,
           logging:
@@ -367,6 +446,8 @@ describe(
             {
               dynamoDbAdapter:
                 fixture.dynamoDbAdapter,
+              dynamoDbAbsenceVerifier:
+                fixture.dynamoDbAbsenceVerifier,
               externalAdapter:
                 fixture.externalAdapter,
             },
@@ -445,7 +526,15 @@ describe(
                 "BUSINESS#SENSITIVE#derived-index-01",
             },
           ],
+          transactionRequestDigest:
+            expect.stringMatching(
+              /^[a-f0-9]{64}$/,
+            ),
         });
+
+        expect(
+          fixture.verifyAbsent,
+        ).toHaveBeenCalledTimes(1);
       },
     );
 
@@ -492,6 +581,8 @@ describe(
             {
               dynamoDbAdapter:
                 fixture.dynamoDbAdapter,
+              dynamoDbAbsenceVerifier:
+                fixture.dynamoDbAbsenceVerifier,
               externalAdapter:
                 fixture.externalAdapter,
             },
@@ -570,6 +661,8 @@ describe(
             {
               dynamoDbAdapter:
                 fixture.dynamoDbAdapter,
+              dynamoDbAbsenceVerifier:
+                fixture.dynamoDbAbsenceVerifier,
               externalAdapter:
                 fixture.externalAdapter,
             },
@@ -643,6 +736,8 @@ describe(
             {
               dynamoDbAdapter:
                 fixture.dynamoDbAdapter,
+              dynamoDbAbsenceVerifier:
+                fixture.dynamoDbAbsenceVerifier,
               externalAdapter:
                 fixture.externalAdapter,
             },
@@ -760,6 +855,8 @@ describe(
             {
               dynamoDbAdapter:
                 fixture.dynamoDbAdapter,
+              dynamoDbAbsenceVerifier:
+                fixture.dynamoDbAbsenceVerifier,
               externalAdapter:
                 fixture.externalAdapter,
             },
@@ -835,6 +932,8 @@ describe(
             {
               dynamoDbAdapter:
                 fixture.dynamoDbAdapter,
+              dynamoDbAbsenceVerifier:
+                fixture.dynamoDbAbsenceVerifier,
               externalAdapter:
                 fixture.externalAdapter,
             },
@@ -932,6 +1031,8 @@ describe(
             {
               dynamoDbAdapter:
                 fixture.dynamoDbAdapter,
+              dynamoDbAbsenceVerifier:
+                fixture.dynamoDbAbsenceVerifier,
               externalAdapter:
                 fixture.externalAdapter,
             },
@@ -968,6 +1069,9 @@ describe(
               dynamoDbAdapter:
                 activeFixture
                   .dynamoDbAdapter,
+              dynamoDbAbsenceVerifier:
+                activeFixture
+                  .dynamoDbAbsenceVerifier,
               externalAdapter:
                 activeFixture
                   .externalAdapter,
@@ -1005,78 +1109,146 @@ describe(
     );
 
     it(
-      "accepts only an exact verified component set with a canonical verification time",
+      "fails closed on unknown, missing, duplicate, or mismatched transaction receipts",
       async () => {
-        const value =
-          manifest();
+        const value = manifest();
+        const step = executableSteps(value)[0]!;
 
-        const step =
-          executableSteps(
-            value,
-          )[0]!;
+        const receiptOverrides = [
+          { outcome: "verified-complete" },
+          { operationId: undefined },
+          { manifestIntegrityDigest: HASH_C },
+          { stepIndex: 2 },
+          { stepId: "wrong-step" },
+          { attemptTokenDigest: HASH_C },
+          { componentIds: ["ciphertext-primary"] },
+          {
+            componentIds: [
+              "ciphertext-primary",
+              "ciphertext-primary",
+            ],
+          },
+          { awsAccountId: "999999999999" },
+          { awsRegion: "us-west-2" },
+          { transactionRequestDigest: HASH_C },
+          { acceptedAt: "2026-08-08 16:05:00Z" },
+        ] as const;
 
-        const externalAdapter = {
-          execute:
-            vi.fn(),
-        } as BusinessDeletionExternalAdapter;
+        for (const override of receiptOverrides) {
+          const verifyAbsent = vi.fn();
+          const transactionAdapter = {
+            execute: vi.fn().mockImplementation(
+              async (input: BusinessDeletionDynamoDbTransactionAdapterInput) => ({
+                outcome: "transaction-accepted",
+                operationId: input.operationId,
+                manifestIntegrityDigest:
+                  input.manifestIntegrityDigest,
+                stepIndex: input.stepIndex,
+                stepId: input.stepId,
+                attemptTokenDigest:
+                  input.attemptTokenDigest,
+                componentIds: input.targets.map(
+                  (target) => target.componentId,
+                ),
+                awsAccountId: input.targets[0]!.awsAccountId,
+                awsRegion: input.targets[0]!.awsRegion,
+                transactionRequestDigest:
+                  input.transactionRequestDigest,
+                acceptedAt: VERIFIED_AT,
+                ...override,
+              }),
+            ),
+          } as BusinessDeletionDynamoDbTransactionAdapter;
 
-        for (
-          const result of
-          [
-            {
-              outcome:
-                "verified-complete",
-              completedComponentIds: [
-                "ciphertext-primary",
-              ],
-              verifiedAt:
-                VERIFIED_AT,
-            },
-            {
-              outcome:
-                "verified-complete",
-              completedComponentIds: [
-                "ciphertext-primary",
-                "ciphertext-primary",
-              ],
-              verifiedAt:
-                VERIFIED_AT,
-            },
-            {
-              outcome:
-                "verified-complete",
-              completedComponentIds:
-                step.componentIds,
-              verifiedAt:
-                "2026-08-08 16:05:00Z",
-            },
-          ] as const
-        ) {
           const port =
             createManifestBoundBusinessDeletionExecutionPort(
               value,
               {
-                dynamoDbAdapter: {
-                  execute:
-                    vi.fn()
-                      .mockResolvedValue(
-                        result,
-                      ),
-                },
-                externalAdapter,
+                dynamoDbAdapter: transactionAdapter,
+                dynamoDbAbsenceVerifier: {
+                  verifyAbsent,
+                } as BusinessDeletionAbsenceVerifier,
+                externalAdapter: {
+                  execute: vi.fn(),
+                } as BusinessDeletionExternalAdapter,
               },
             );
 
           await expect(
-            port.executeStep(
-              portInput(
-                value,
-                step,
+            port.executeStep(portInput(value, step)),
+          ).rejects.toThrow(/Deletion executor refused:/);
+          expect(verifyAbsent).not.toHaveBeenCalled();
+        }
+      },
+    );
+
+    it(
+      "produces verified-complete only from exact independent absence evidence",
+      async () => {
+        const value = manifest();
+        const step = executableSteps(value)[0]!;
+
+        const verificationOverrides = [
+          { outcome: "transaction-accepted" },
+          { operationId: undefined },
+          { manifestIntegrityDigest: HASH_C },
+          { stepIndex: 2 },
+          { stepId: "wrong-step" },
+          { attemptTokenDigest: HASH_C },
+          { componentIds: ["ciphertext-primary"] },
+          {
+            componentIds: [
+              "ciphertext-primary",
+              "ciphertext-primary",
+            ],
+          },
+          { awsAccountId: "999999999999" },
+          { awsRegion: "us-west-2" },
+          { transactionRequestDigest: HASH_C },
+          { verifiedAt: "2026-08-08 16:05:00Z" },
+        ] as const;
+
+        for (const override of verificationOverrides) {
+          const fixture = adapters();
+          fixture.verifyAbsent.mockImplementationOnce(
+            async (
+              input:
+                BusinessDeletionDynamoDbAbsenceVerifierInput,
+            ) => ({
+              outcome: "absence-verified",
+              operationId: input.operationId,
+              manifestIntegrityDigest:
+                input.manifestIntegrityDigest,
+              stepIndex: input.stepIndex,
+              stepId: input.stepId,
+              attemptTokenDigest:
+                input.attemptTokenDigest,
+              componentIds: input.targets.map(
+                (target) => target.componentId,
               ),
-            ),
-          ).rejects.toThrow(
-            /Deletion executor refused:/,
+              awsAccountId: input.targets[0]!.awsAccountId,
+              awsRegion: input.targets[0]!.awsRegion,
+              transactionRequestDigest:
+                input.transactionReceipt.transactionRequestDigest,
+              verifiedAt: VERIFIED_AT,
+              ...override,
+            }),
           );
+
+          const port =
+            createManifestBoundBusinessDeletionExecutionPort(
+              value,
+              {
+                dynamoDbAdapter: fixture.dynamoDbAdapter,
+                dynamoDbAbsenceVerifier:
+                  fixture.dynamoDbAbsenceVerifier,
+                externalAdapter: fixture.externalAdapter,
+              },
+            );
+
+          await expect(
+            port.executeStep(portInput(value, step)),
+          ).rejects.toThrow(/Deletion executor refused:/);
         }
       },
     );
@@ -1094,11 +1266,15 @@ describe(
               {
                 dynamoDbAdapter:
                   null,
+                dynamoDbAbsenceVerifier:
+                  null,
                 externalAdapter:
                   null,
               } as unknown as {
                 dynamoDbAdapter:
-                  BusinessDeletionDynamoDbAdapter;
+                  BusinessDeletionDynamoDbTransactionAdapter;
+                dynamoDbAbsenceVerifier:
+                  BusinessDeletionAbsenceVerifier;
                 externalAdapter:
                   BusinessDeletionExternalAdapter;
               },
