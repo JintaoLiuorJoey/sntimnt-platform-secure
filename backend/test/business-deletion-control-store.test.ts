@@ -6,6 +6,7 @@ import {
 import {
   BUSINESS_DELETION_BACKUP_DISCLOSURE_VERSION,
   BUSINESS_DELETION_CONTROL_RETENTION_DAYS,
+  BUSINESS_DELETION_EXECUTION_SCHEMA_VERSION,
   BUSINESS_DELETION_TOPOLOGY_VERSION,
   createBusinessDeletionManifest,
   type BusinessDeletionComponentInput,
@@ -98,6 +99,18 @@ function dynamoComponent(
         OWNER,
       sortKey:
         `BUSINESS#SENSITIVE#${componentId}`,
+      itemGenerationPrecondition: {
+        mode:
+          "exact-generation-or-absent",
+        partitionKeyAttributeName:
+          "pk",
+        sortKeyAttributeName:
+          "sk",
+        generationAttributeName:
+          "deletionGuardDigest",
+        expectedGenerationDigest:
+          HASH_A,
+      },
       estimatedItemBytes:
         1024,
     },
@@ -1358,7 +1371,7 @@ describe(
             operation,
             {
               schemaVersion:
-                1,
+                BUSINESS_DELETION_EXECUTION_SCHEMA_VERSION,
               operationId:
                 OPERATION_ID,
               policyVersion:
@@ -1426,7 +1439,7 @@ describe(
               operation,
               {
                 schemaVersion:
-                  1,
+                  BUSINESS_DELETION_EXECUTION_SCHEMA_VERSION,
                 operationId:
                   OPERATION_ID,
                 policyVersion:

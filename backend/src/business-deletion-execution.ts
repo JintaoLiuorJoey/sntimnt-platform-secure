@@ -8,7 +8,7 @@ import {
 } from "./business-data-protection.js";
 
 export const BUSINESS_DELETION_EXECUTION_SCHEMA_VERSION =
-  1 as const;
+  2 as const;
 
 export const BUSINESS_DELETION_TOPOLOGY_VERSION =
   1 as const;
@@ -39,6 +39,18 @@ export const BUSINESS_DELETION_COMPONENT_BYTE_BUDGET =
 export const BUSINESS_DELETION_CONTROL_RETENTION_DAYS =
   90 as const;
 
+export const BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION =
+  Object.freeze({
+    mode:
+      "exact-generation-or-absent",
+    partitionKeyAttributeName:
+      "pk",
+    sortKeyAttributeName:
+      "sk",
+    generationAttributeName:
+      "deletionGuardDigest",
+  } as const);
+
 export const BUSINESS_DELETION_COMPONENT_ROLES =
   Object.freeze([
     "ciphertext-primary",
@@ -60,6 +72,19 @@ export const BUSINESS_DELETION_EXTERNAL_SYSTEM_ROLES =
 export type BusinessDeletionExternalSystemRole =
   (typeof BUSINESS_DELETION_EXTERNAL_SYSTEM_ROLES)[number];
 
+export interface BusinessDeletionDynamoDbItemGenerationPrecondition {
+  readonly mode:
+    typeof BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION.mode;
+  readonly partitionKeyAttributeName:
+    typeof BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION.partitionKeyAttributeName;
+  readonly sortKeyAttributeName:
+    typeof BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION.sortKeyAttributeName;
+  readonly generationAttributeName:
+    typeof BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION.generationAttributeName;
+  readonly expectedGenerationDigest:
+    string;
+}
+
 export interface BusinessDeletionDynamoDbLocator {
   readonly system:
     "dynamodb";
@@ -73,6 +98,8 @@ export interface BusinessDeletionDynamoDbLocator {
     string;
   readonly sortKey:
     string;
+  readonly itemGenerationPrecondition:
+    BusinessDeletionDynamoDbItemGenerationPrecondition;
   readonly estimatedItemBytes:
     number;
 }
@@ -616,6 +643,42 @@ function validatedDynamoDbLocator(
     );
   }
 
+  const precondition =
+    input.itemGenerationPrecondition;
+
+  if (
+    !precondition ||
+    precondition.mode !==
+      BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION.mode ||
+    precondition.partitionKeyAttributeName !==
+      BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION.partitionKeyAttributeName ||
+    precondition.sortKeyAttributeName !==
+      BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION.sortKeyAttributeName ||
+    precondition.generationAttributeName !==
+      BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION.generationAttributeName
+  ) {
+    throw new Error(
+      "DynamoDB item-generation precondition is unsupported.",
+    );
+  }
+
+  const itemGenerationPrecondition =
+    Object.freeze({
+      mode:
+        precondition.mode,
+      partitionKeyAttributeName:
+        precondition.partitionKeyAttributeName,
+      sortKeyAttributeName:
+        precondition.sortKeyAttributeName,
+      generationAttributeName:
+        precondition.generationAttributeName,
+      expectedGenerationDigest:
+        canonicalDigest(
+          precondition.expectedGenerationDigest,
+          "DynamoDB expected item generation",
+        ),
+    });
+
   return Object.freeze({
     system:
       "dynamodb",
@@ -635,6 +698,7 @@ function validatedDynamoDbLocator(
         input.sortKey,
         "DynamoDB sort key",
       ),
+    itemGenerationPrecondition,
     estimatedItemBytes,
   });
 }
@@ -682,6 +746,11 @@ function locatorCanonicalValue(
       locator.awsRegion,
       locator.partitionKey,
       locator.sortKey,
+      locator.itemGenerationPrecondition.mode,
+      locator.itemGenerationPrecondition.partitionKeyAttributeName,
+      locator.itemGenerationPrecondition.sortKeyAttributeName,
+      locator.itemGenerationPrecondition.generationAttributeName,
+      locator.itemGenerationPrecondition.expectedGenerationDigest,
     ].join("\u001F");
   }
 
@@ -829,6 +898,9 @@ function frozenComponents(
   const locatorDigests =
     new Set<string>();
 
+  const dynamoDbPhysicalTargets =
+    new Set<string>();
+
   let ciphertextPrimaryCount =
     0;
 
@@ -863,6 +935,35 @@ function frozenComponents(
     locatorDigests.add(
       component.locatorDigest,
     );
+
+    if (
+      component.locator.system ===
+      "dynamodb"
+    ) {
+      const physicalTarget =
+        [
+          component.locator.system,
+          component.locator.tableRole,
+          component.locator.awsAccountId,
+          component.locator.awsRegion,
+          component.locator.partitionKey,
+          component.locator.sortKey,
+        ].join("\u001F");
+
+      if (
+        dynamoDbPhysicalTargets.has(
+          physicalTarget,
+        )
+      ) {
+        throw new Error(
+          "Deletion manifest locators must target distinct components.",
+        );
+      }
+
+      dynamoDbPhysicalTargets.add(
+        physicalTarget,
+      );
+    }
 
     if (
       component.role ===

@@ -4,6 +4,7 @@ import {
   BUSINESS_DELETION_RESERVED_TRANSACTION_ACTIONS,
   type BusinessDeletionComponent,
   type BusinessDeletionDynamoDbLocator,
+  type BusinessDeletionDynamoDbItemGenerationPrecondition,
   type BusinessDeletionExecutionStep,
   type BusinessDeletionExternalLocator,
   type BusinessDeletionExternalSystemRole,
@@ -17,7 +18,7 @@ import {
 } from "./business-deletion-orchestration.js";
 
 export const BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION =
-  2 as const;
+  3 as const;
 
 export const BUSINESS_DELETION_EXECUTOR_BOUNDARY =
   Object.freeze({
@@ -35,6 +36,10 @@ export const BUSINESS_DELETION_EXECUTOR_BOUNDARY =
       "transaction-receipt-contract-only",
     dynamoDbAbsenceVerifier:
       "independent-read-only-contract-only",
+    dynamoDbItemGeneration:
+      "manifest-bound-exact-generation-or-absent",
+    unconditionalDynamoDbDelete:
+      false,
     externalAdapter:
       "dependency-injected-contract-only",
     adapterCompletion:
@@ -72,6 +77,8 @@ export interface BusinessDeletionDynamoDbTarget {
     string;
   readonly sortKey:
     string;
+  readonly itemGenerationPrecondition:
+    BusinessDeletionDynamoDbItemGenerationPrecondition;
 }
 
 export interface BusinessDeletionExternalTarget {
@@ -387,6 +394,18 @@ function transactionRequestDigest(
                 target.partitionKey,
               sortKey:
                 target.sortKey,
+              itemGenerationPrecondition: {
+                mode:
+                  target.itemGenerationPrecondition.mode,
+                partitionKeyAttributeName:
+                  target.itemGenerationPrecondition.partitionKeyAttributeName,
+                sortKeyAttributeName:
+                  target.itemGenerationPrecondition.sortKeyAttributeName,
+                generationAttributeName:
+                  target.itemGenerationPrecondition.generationAttributeName,
+                expectedGenerationDigest:
+                  target.itemGenerationPrecondition.expectedGenerationDigest,
+              },
             }),
           ),
       }),
@@ -680,6 +699,10 @@ function dynamoTarget(
       locator.partitionKey,
     sortKey:
       locator.sortKey,
+    itemGenerationPrecondition:
+      Object.freeze({
+        ...locator.itemGenerationPrecondition,
+      }),
   });
 }
 
