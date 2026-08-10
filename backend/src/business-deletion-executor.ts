@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   BUSINESS_DELETION_RESERVED_TRANSACTION_ACTIONS,
   type BusinessDeletionComponent,
@@ -15,7 +17,7 @@ import {
 } from "./business-deletion-orchestration.js";
 
 export const BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION =
-  1 as const;
+  2 as const;
 
 export const BUSINESS_DELETION_EXECUTOR_BOUNDARY =
   Object.freeze({
@@ -30,11 +32,13 @@ export const BUSINESS_DELETION_EXECUTOR_BOUNDARY =
     rawLocatorResolution:
       "executor-boundary-only",
     dynamoDbAdapter:
-      "dependency-injected-contract-only",
+      "transaction-receipt-contract-only",
+    dynamoDbAbsenceVerifier:
+      "independent-read-only-contract-only",
     externalAdapter:
       "dependency-injected-contract-only",
     adapterCompletion:
-      "verified-complete-exact-component-set",
+      "receipt-plus-absence-verification",
     persistence:
       false,
     logging:
@@ -79,7 +83,7 @@ export interface BusinessDeletionExternalTarget {
     string;
 }
 
-export interface BusinessDeletionDynamoDbAdapterInput {
+export interface BusinessDeletionDynamoDbTransactionAdapterInput {
   readonly schemaVersion:
     typeof BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION;
   readonly operationId:
@@ -98,6 +102,8 @@ export interface BusinessDeletionDynamoDbAdapterInput {
     number;
   readonly targets:
     readonly BusinessDeletionDynamoDbTarget[];
+  readonly transactionRequestDigest:
+    string;
 }
 
 export interface BusinessDeletionExternalAdapterInput {
@@ -130,15 +136,97 @@ export interface BusinessDeletionAdapterVerifiedCompletion {
     string;
 }
 
-export interface BusinessDeletionDynamoDbAdapter {
+export interface BusinessDeletionDynamoDbTransactionReceipt {
+  readonly outcome:
+    "transaction-accepted";
+  readonly operationId:
+    string;
+  readonly manifestIntegrityDigest:
+    string;
+  readonly stepIndex:
+    number;
+  readonly stepId:
+    string;
+  readonly attemptTokenDigest:
+    string;
+  readonly componentIds:
+    readonly string[];
+  readonly awsAccountId:
+    string;
+  readonly awsRegion:
+    string;
+  readonly transactionRequestDigest:
+    string;
+  readonly acceptedAt:
+    string;
+}
+
+export interface BusinessDeletionDynamoDbAbsenceVerifierInput {
+  readonly schemaVersion:
+    typeof BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION;
+  readonly operationId:
+    string;
+  readonly manifestIntegrityDigest:
+    string;
+  readonly stepIndex:
+    number;
+  readonly stepId:
+    string;
+  readonly attemptTokenDigest:
+    string;
+  readonly targets:
+    readonly BusinessDeletionDynamoDbTarget[];
+  readonly transactionReceipt:
+    Readonly<BusinessDeletionDynamoDbTransactionReceipt>;
+}
+
+export interface BusinessDeletionDynamoDbAbsenceVerification {
+  readonly outcome:
+    "absence-verified";
+  readonly operationId:
+    string;
+  readonly manifestIntegrityDigest:
+    string;
+  readonly stepIndex:
+    number;
+  readonly stepId:
+    string;
+  readonly attemptTokenDigest:
+    string;
+  readonly componentIds:
+    readonly string[];
+  readonly awsAccountId:
+    string;
+  readonly awsRegion:
+    string;
+  readonly transactionRequestDigest:
+    string;
+  readonly verifiedAt:
+    string;
+}
+
+export interface BusinessDeletionDynamoDbTransactionAdapter {
   execute(
     input:
       Readonly<
-        BusinessDeletionDynamoDbAdapterInput
+        BusinessDeletionDynamoDbTransactionAdapterInput
       >,
   ): Promise<
     Readonly<
-      BusinessDeletionAdapterVerifiedCompletion
+      BusinessDeletionDynamoDbTransactionReceipt
+    >
+  >;
+}
+
+export interface BusinessDeletionAbsenceVerifier {
+  verifyAbsent(
+    input:
+      Readonly<
+        BusinessDeletionDynamoDbAbsenceVerifierInput
+      >,
+  ): Promise<
+    Readonly<
+      BusinessDeletionDynamoDbAbsenceVerification
     >
   >;
 }
@@ -158,7 +246,9 @@ export interface BusinessDeletionExternalAdapter {
 
 export interface ManifestBoundBusinessDeletionExecutorDependencies {
   readonly dynamoDbAdapter:
-    BusinessDeletionDynamoDbAdapter;
+    BusinessDeletionDynamoDbTransactionAdapter;
+  readonly dynamoDbAbsenceVerifier:
+    BusinessDeletionAbsenceVerifier;
   readonly externalAdapter:
     BusinessDeletionExternalAdapter;
 }
@@ -255,6 +345,173 @@ function canonicalVerifiedAt(
   }
 
   return value;
+}
+
+function transactionRequestDigest(
+  input:
+    Omit<
+      BusinessDeletionDynamoDbTransactionAdapterInput,
+      "schemaVersion" |
+      "transactionRequestDigest"
+    >,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        operationId:
+          input.operationId,
+        manifestIntegrityDigest:
+          input.manifestIntegrityDigest,
+        stepIndex:
+          input.stepIndex,
+        stepId:
+          input.stepId,
+        attemptTokenDigest:
+          input.attemptTokenDigest,
+        attemptNumber:
+          input.attemptNumber,
+        requiredLegalHoldVersion:
+          input.requiredLegalHoldVersion,
+        targets:
+          input.targets.map(
+            (target) => ({
+              componentId:
+                target.componentId,
+              tableRole:
+                target.tableRole,
+              awsAccountId:
+                target.awsAccountId,
+              awsRegion:
+                target.awsRegion,
+              partitionKey:
+                target.partitionKey,
+              sortKey:
+                target.sortKey,
+            }),
+          ),
+      }),
+      "utf8",
+    )
+    .digest("hex");
+}
+
+function validatedTransactionReceipt(
+  input:
+    Readonly<BusinessDeletionDynamoDbTransactionAdapterInput>,
+  receipt:
+    Readonly<BusinessDeletionDynamoDbTransactionReceipt>,
+): Readonly<BusinessDeletionDynamoDbTransactionReceipt> {
+  const expectedComponentIds =
+    input.targets.map(
+      (target) => target.componentId,
+    );
+  const expectedAccountId =
+    input.targets[0]?.awsAccountId;
+  const expectedRegion =
+    input.targets[0]?.awsRegion;
+
+  if (
+    !receipt ||
+    receipt.outcome !==
+      "transaction-accepted" ||
+    receipt.operationId !==
+      input.operationId ||
+    receipt.manifestIntegrityDigest !==
+      input.manifestIntegrityDigest ||
+    receipt.stepIndex !==
+      input.stepIndex ||
+    receipt.stepId !==
+      input.stepId ||
+    receipt.attemptTokenDigest !==
+      input.attemptTokenDigest ||
+    !Array.isArray(
+      receipt.componentIds,
+    ) ||
+    !exactStringSet(
+      expectedComponentIds,
+      receipt.componentIds,
+    ) ||
+    receipt.awsAccountId !==
+      expectedAccountId ||
+    receipt.awsRegion !==
+      expectedRegion ||
+    receipt.transactionRequestDigest !==
+      input.transactionRequestDigest
+  ) {
+    throw executorError(
+      "transaction receipt does not match the exact planned request.",
+    );
+  }
+
+  canonicalVerifiedAt(
+    receipt.acceptedAt,
+  );
+
+  return Object.freeze({
+    ...receipt,
+    componentIds:
+      Object.freeze([
+        ...receipt.componentIds,
+      ]),
+  });
+}
+
+function verifiedAbsenceResult(
+  input:
+    Readonly<BusinessDeletionDynamoDbTransactionAdapterInput>,
+  result:
+    Readonly<BusinessDeletionDynamoDbAbsenceVerification>,
+): Readonly<BusinessDeletionExecutionPortResult> {
+  const expectedComponentIds =
+    input.targets.map(
+      (target) => target.componentId,
+    );
+
+  if (
+    !result ||
+    result.outcome !==
+      "absence-verified" ||
+    result.operationId !==
+      input.operationId ||
+    result.manifestIntegrityDigest !==
+      input.manifestIntegrityDigest ||
+    result.stepIndex !==
+      input.stepIndex ||
+    result.stepId !==
+      input.stepId ||
+    result.attemptTokenDigest !==
+      input.attemptTokenDigest ||
+    !Array.isArray(
+      result.componentIds,
+    ) ||
+    !exactStringSet(
+      expectedComponentIds,
+      result.componentIds,
+    ) ||
+    result.awsAccountId !==
+      input.targets[0]?.awsAccountId ||
+    result.awsRegion !==
+      input.targets[0]?.awsRegion ||
+    result.transactionRequestDigest !==
+      input.transactionRequestDigest
+  ) {
+    throw executorError(
+      "absence verifier did not verify the exact accepted transaction.",
+    );
+  }
+
+  return Object.freeze({
+    outcome:
+      "verified-complete",
+    completedComponentIds:
+      Object.freeze([
+        ...expectedComponentIds,
+      ]),
+    verifiedAt:
+      canonicalVerifiedAt(
+        result.verifiedAt,
+      ),
+  });
 }
 
 function componentMap(
@@ -604,6 +861,9 @@ export function createManifestBoundBusinessDeletionExecutionPort(
     !dependencies.dynamoDbAdapter ||
     typeof dependencies.dynamoDbAdapter.execute !==
       "function" ||
+    !dependencies.dynamoDbAbsenceVerifier ||
+    typeof dependencies.dynamoDbAbsenceVerifier.verifyAbsent !==
+      "function" ||
     !dependencies.externalAdapter ||
     typeof dependencies.externalAdapter.execute !==
       "function"
@@ -718,19 +978,35 @@ export function createManifestBoundBusinessDeletionExecutionPort(
             ),
           );
 
-        const adapterResult =
-          await dependencies
-            .dynamoDbAdapter
-            .execute(
-              Object.freeze({
-                schemaVersion:
-                  BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION,
+        const adapterInput:
+          Readonly<BusinessDeletionDynamoDbTransactionAdapterInput> =
+          Object.freeze({
+            schemaVersion:
+              BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION,
+            operationId:
+              boundManifest
+                .operationId,
+            manifestIntegrityDigest:
+              boundManifest
+                .manifestIntegrityDigest,
+            stepIndex:
+              input.stepIndex,
+            stepId:
+              step.stepId,
+            attemptTokenDigest:
+              input.attemptTokenDigest,
+            attemptNumber:
+              input.attemptNumber,
+            requiredLegalHoldVersion:
+              step
+                .requiredLegalHoldVersion,
+            targets,
+            transactionRequestDigest:
+              transactionRequestDigest({
                 operationId:
-                  boundManifest
-                    .operationId,
+                  boundManifest.operationId,
                 manifestIntegrityDigest:
-                  boundManifest
-                    .manifestIntegrityDigest,
+                  boundManifest.manifestIntegrityDigest,
                 stepIndex:
                   input.stepIndex,
                 stepId:
@@ -740,15 +1016,49 @@ export function createManifestBoundBusinessDeletionExecutionPort(
                 attemptNumber:
                   input.attemptNumber,
                 requiredLegalHoldVersion:
-                  step
-                    .requiredLegalHoldVersion,
+                  step.requiredLegalHoldVersion,
                 targets,
+              }),
+          });
+
+        const adapterResult =
+          await dependencies
+            .dynamoDbAdapter
+            .execute(
+              adapterInput,
+            );
+
+        const transactionReceipt =
+          validatedTransactionReceipt(
+            adapterInput,
+            adapterResult,
+          );
+
+        const absenceResult =
+          await dependencies
+            .dynamoDbAbsenceVerifier
+            .verifyAbsent(
+              Object.freeze({
+                schemaVersion:
+                  BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION,
+                operationId:
+                  adapterInput.operationId,
+                manifestIntegrityDigest:
+                  adapterInput.manifestIntegrityDigest,
+                stepIndex:
+                  adapterInput.stepIndex,
+                stepId:
+                  adapterInput.stepId,
+                attemptTokenDigest:
+                  adapterInput.attemptTokenDigest,
+                targets,
+                transactionReceipt,
               }),
             );
 
-        return verifiedResult(
-          step.componentIds,
-          adapterResult,
+        return verifiedAbsenceResult(
+          adapterInput,
+          absenceResult,
         );
       }
 
