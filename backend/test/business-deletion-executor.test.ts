@@ -10,6 +10,7 @@ import {
 
 import {
   BUSINESS_DELETION_TOPOLOGY_VERSION,
+  BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
   createBusinessDeletionManifest,
   planBusinessDeletionExecution,
   type BusinessDeletionComponentInput,
@@ -76,6 +77,8 @@ function dynamoComponent(
         string;
       sortKey:
         string;
+      expectedGenerationDigest:
+        string;
       estimatedItemBytes:
         number;
     }> = {},
@@ -100,6 +103,12 @@ function dynamoComponent(
       sortKey:
         input.sortKey ??
         `BUSINESS#SENSITIVE#${componentId}`,
+      itemGenerationPrecondition: {
+        ...BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
+        expectedGenerationDigest:
+          input.expectedGenerationDigest ??
+          HASH_A,
+      },
       estimatedItemBytes:
         input.estimatedItemBytes ??
         1024,
@@ -376,7 +385,7 @@ describe(
       () => {
         expect(
           BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION,
-        ).toBe(2);
+        ).toBe(3);
 
         expect(
           BUSINESS_DELETION_EXECUTOR_BOUNDARY,
@@ -395,6 +404,10 @@ describe(
             "transaction-receipt-contract-only",
           dynamoDbAbsenceVerifier:
             "independent-read-only-contract-only",
+          dynamoDbItemGeneration:
+            "manifest-bound-exact-generation-or-absent",
+          unconditionalDynamoDbDelete:
+            false,
           externalAdapter:
             "dependency-injected-contract-only",
           adapterCompletion:
@@ -510,6 +523,11 @@ describe(
                 OWNER,
               sortKey:
                 "BUSINESS#SENSITIVE#ciphertext-primary",
+              itemGenerationPrecondition: {
+                ...BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
+                expectedGenerationDigest:
+                  HASH_A,
+              },
             },
             {
               componentId:
@@ -524,6 +542,11 @@ describe(
                 OWNER,
               sortKey:
                 "BUSINESS#SENSITIVE#derived-index-01",
+              itemGenerationPrecondition: {
+                ...BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
+                expectedGenerationDigest:
+                  HASH_A,
+              },
             },
           ],
           transactionRequestDigest:
@@ -1309,6 +1332,18 @@ describe(
         ).not.toContain(
           "referenceDigest",
         );
+
+        expect(
+          orchestrationSource,
+        ).not.toContain(
+          "deletionGuardDigest",
+        );
+
+        expect(
+          orchestrationSource,
+        ).not.toContain(
+          "expectedGenerationDigest",
+        );
       },
     );
 
@@ -1366,6 +1401,18 @@ describe(
           source,
         ).toContain(
           "referenceDigest",
+        );
+
+        expect(
+          source,
+        ).toContain(
+          "itemGenerationPrecondition",
+        );
+
+        expect(
+          source,
+        ).toContain(
+          "expectedGenerationDigest",
         );
       },
     );

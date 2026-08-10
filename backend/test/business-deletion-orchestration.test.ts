@@ -89,6 +89,18 @@ function dynamoComponent(
         OWNER,
       sortKey:
         `BUSINESS#SENSITIVE#${componentId}`,
+      itemGenerationPrecondition: {
+        mode:
+          "exact-generation-or-absent",
+        partitionKeyAttributeName:
+          "pk",
+        sortKeyAttributeName:
+          "sk",
+        generationAttributeName:
+          "deletionGuardDigest",
+        expectedGenerationDigest:
+          HASH_A,
+      },
       estimatedItemBytes:
         1024,
     },

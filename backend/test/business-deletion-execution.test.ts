@@ -11,6 +11,7 @@ import {
   BUSINESS_DELETION_COMPONENT_BYTE_BUDGET,
   BUSINESS_DELETION_COMPONENT_ROLES,
   BUSINESS_DELETION_CONTROL_RETENTION_DAYS,
+  BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
   BUSINESS_DELETION_EXECUTION_SCHEMA_VERSION,
   BUSINESS_DELETION_RESERVED_TRANSACTION_ACTIONS,
   BUSINESS_DELETION_TOPOLOGY_VERSION,
@@ -68,6 +69,8 @@ function dynamoComponent(
         string;
       sortKey:
         string;
+      expectedGenerationDigest:
+        string;
       estimatedItemBytes:
         number;
     }> = {},
@@ -92,6 +95,12 @@ function dynamoComponent(
       sortKey:
         input.sortKey ??
         `BUSINESS#SENSITIVE#${componentId}`,
+      itemGenerationPrecondition: {
+        ...BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
+        expectedGenerationDigest:
+          input.expectedGenerationDigest ??
+          HASH_A,
+      },
       estimatedItemBytes:
         input.estimatedItemBytes ??
         1024,
@@ -206,7 +215,7 @@ describe(
       () => {
         expect(
           BUSINESS_DELETION_EXECUTION_SCHEMA_VERSION,
-        ).toBe(1);
+        ).toBe(2);
 
         expect(
           BUSINESS_DELETION_TOPOLOGY_VERSION,
@@ -244,6 +253,19 @@ describe(
         expect(
           BUSINESS_DELETION_CONTROL_RETENTION_DAYS,
         ).toBe(90);
+
+        expect(
+          BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
+        ).toEqual({
+          mode:
+            "exact-generation-or-absent",
+          partitionKeyAttributeName:
+            "pk",
+          sortKeyAttributeName:
+            "sk",
+          generationAttributeName:
+            "deletionGuardDigest",
+        });
 
         expect(
           BUSINESS_DELETION_COMPONENT_ROLES,
@@ -326,6 +348,128 @@ describe(
               ?.locator,
           ),
         ).toBe(true);
+
+        const firstLocator =
+          value.components[0]
+            ?.locator;
+
+        expect(
+          firstLocator?.system ===
+            "dynamodb" &&
+          Object.isFrozen(
+            firstLocator.itemGenerationPrecondition,
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "requires and integrity-binds an exact DynamoDB item generation",
+      () => {
+        const first =
+          manifest();
+
+        const second =
+          manifest({
+            components: [
+              dynamoComponent(
+                "ciphertext-primary",
+                "ciphertext-primary",
+                {
+                  expectedGenerationDigest:
+                    HASH_B,
+                },
+              ),
+              dynamoComponent(
+                "derived-index-01",
+              ),
+            ],
+          });
+
+        expect(
+          second.manifestIntegrityDigest,
+        ).not.toBe(
+          first.manifestIntegrityDigest,
+        );
+
+        const primary =
+          dynamoComponent(
+            "ciphertext-primary",
+            "ciphertext-primary",
+          );
+
+        if (
+          primary.locator.system !==
+          "dynamodb"
+        ) {
+          throw new Error(
+            "Expected DynamoDB locator.",
+          );
+        }
+
+        for (
+          const itemGenerationPrecondition of
+          [
+            undefined,
+            {
+              ...BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
+              mode:
+                "attribute-exists",
+              expectedGenerationDigest:
+                HASH_A,
+            },
+            {
+              ...BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
+              generationAttributeName:
+                "createdAt",
+              expectedGenerationDigest:
+                HASH_A,
+            },
+          ]
+        ) {
+          const invalid = {
+            ...primary,
+            locator: {
+              ...primary.locator,
+              itemGenerationPrecondition,
+            },
+          } as unknown as BusinessDeletionComponentInput;
+
+          expect(
+            () =>
+              manifest({
+                components: [
+                  invalid,
+                  dynamoComponent(
+                    "derived-index-01",
+                  ),
+                ],
+              }),
+          ).toThrow(
+            "DynamoDB item-generation precondition is unsupported.",
+          );
+        }
+
+        expect(
+          () =>
+            manifest({
+              components: [
+                dynamoComponent(
+                  "ciphertext-primary",
+                  "ciphertext-primary",
+                  {
+                    expectedGenerationDigest:
+                      "not-a-digest",
+                  },
+                ),
+                dynamoComponent(
+                  "derived-index-01",
+                ),
+              ],
+            }),
+        ).toThrow(
+          "DynamoDB expected item generation must be a lowercase SHA-256 digest.",
+        );
       },
     );
 
@@ -511,6 +655,8 @@ describe(
                   {
                     sortKey:
                       "BUSINESS#SENSITIVE#same",
+                    expectedGenerationDigest:
+                      HASH_B,
                     estimatedItemBytes:
                       200,
                   },
@@ -545,6 +691,11 @@ describe(
                 OWNER,
               sortKey:
                 "BUSINESS#COPY#01",
+              itemGenerationPrecondition: {
+                ...BUSINESS_DELETION_DYNAMODB_ITEM_GENERATION_PRECONDITION,
+                expectedGenerationDigest:
+                  HASH_A,
+              },
               estimatedItemBytes:
                 100,
             },
