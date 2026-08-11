@@ -3,6 +3,10 @@ import {
   DYNAMODB_TRANSACTION_ACTION_LIMIT,
 } from "./business-deletion-execution.js";
 import {
+  businessDeletionControlOperationKey,
+  businessDeletionControlProgressKey,
+} from "./business-deletion-control-store.js";
+import {
   BUSINESS_DELETION_EXECUTOR_CONTRACT_SCHEMA_VERSION,
   businessDeletionDynamoDbTransactionRequestDigest,
   type BusinessDeletionDynamoDbTarget,
@@ -22,6 +26,14 @@ export const BUSINESS_DELETION_DYNAMODB_TRANSACTION_REQUEST_BOUNDARY =
       "request-digest-prefix-144-bit",
     itemCondition:
       "exact-generation-or-absent",
+    reservedActions:
+      "operation-and-attempt-condition-checks",
+    operationFence:
+      "executing-exact-manifest-and-legal-hold-version",
+    attemptFence:
+      "executing-exact-manifest-lease-version-and-token",
+    controlTableMutation:
+      false,
     returnValuesOnConditionFailure:
       "NONE",
     awsSdkCommand:
@@ -43,6 +55,96 @@ export interface BusinessDeletionDynamoDbTransactionRequestConfig {
     string;
   readonly tableName:
     string;
+  readonly deletionControlTableName:
+    string;
+}
+
+export interface BusinessDeletionDynamoDbOperationConditionCheckAction {
+  readonly ConditionCheck:
+    Readonly<{
+      TableName:
+        string;
+      Key:
+        Readonly<{
+          pk:
+            Readonly<{
+              S:
+                string;
+            }>;
+          sk:
+            Readonly<{
+              S:
+                string;
+            }>;
+        }>;
+      ConditionExpression:
+        "attribute_exists(#pk) AND attribute_exists(#sk) AND #kind = :kind AND #operationId = :operationId AND #manifestIntegrityDigest = :manifestIntegrityDigest AND #state = :state AND #legalHoldVersion = :requiredLegalHoldVersion";
+      ExpressionAttributeNames:
+        Readonly<{
+          "#pk": "pk";
+          "#sk": "sk";
+          "#kind": "kind";
+          "#operationId": "operationId";
+          "#manifestIntegrityDigest": "manifestIntegrityDigest";
+          "#state": "state";
+          "#legalHoldVersion": "legalHoldVersion";
+        }>;
+      ExpressionAttributeValues:
+        Readonly<{
+          ":kind": Readonly<{ S: "operation-root" }>;
+          ":operationId": Readonly<{ S: string }>;
+          ":manifestIntegrityDigest": Readonly<{ S: string }>;
+          ":state": Readonly<{ S: "executing" }>;
+          ":requiredLegalHoldVersion": Readonly<{ N: string }>;
+        }>;
+      ReturnValuesOnConditionCheckFailure:
+        "NONE";
+    }>;
+}
+
+export interface BusinessDeletionDynamoDbAttemptConditionCheckAction {
+  readonly ConditionCheck:
+    Readonly<{
+      TableName:
+        string;
+      Key:
+        Readonly<{
+          pk:
+            Readonly<{
+              S:
+                string;
+            }>;
+          sk:
+            Readonly<{
+              S:
+                string;
+            }>;
+        }>;
+      ConditionExpression:
+        "attribute_exists(#pk) AND attribute_exists(#sk) AND #kind = :kind AND #operationId = :operationId AND #manifestIntegrityDigest = :manifestIntegrityDigest AND #state = :state AND #leaseVersion = :attemptNumber AND #leaseTokenDigest = :attemptTokenDigest";
+      ExpressionAttributeNames:
+        Readonly<{
+          "#pk": "pk";
+          "#sk": "sk";
+          "#kind": "kind";
+          "#operationId": "operationId";
+          "#manifestIntegrityDigest": "manifestIntegrityDigest";
+          "#state": "state";
+          "#leaseVersion": "leaseVersion";
+          "#leaseTokenDigest": "leaseTokenDigest";
+        }>;
+      ExpressionAttributeValues:
+        Readonly<{
+          ":kind": Readonly<{ S: "progress" }>;
+          ":operationId": Readonly<{ S: string }>;
+          ":manifestIntegrityDigest": Readonly<{ S: string }>;
+          ":state": Readonly<{ S: "executing" }>;
+          ":attemptNumber": Readonly<{ N: string }>;
+          ":attemptTokenDigest": Readonly<{ S: string }>;
+        }>;
+      ReturnValuesOnConditionCheckFailure:
+        "NONE";
+    }>;
 }
 
 export interface BusinessDeletionDynamoDbDeleteAction {
@@ -87,10 +189,17 @@ export interface BusinessDeletionDynamoDbDeleteAction {
     }>;
 }
 
+export type BusinessDeletionDynamoDbTransactionAction =
+  | BusinessDeletionDynamoDbOperationConditionCheckAction
+  | BusinessDeletionDynamoDbAttemptConditionCheckAction
+  | BusinessDeletionDynamoDbDeleteAction;
+
 export interface BusinessDeletionDynamoDbPreparedTransactionRequest {
   readonly schemaVersion:
     typeof BUSINESS_DELETION_DYNAMODB_TRANSACTION_REQUEST_SCHEMA_VERSION;
   readonly operationId:
+    string;
+  readonly manifestIntegrityDigest:
     string;
   readonly stepIndex:
     number;
@@ -108,14 +217,18 @@ export interface BusinessDeletionDynamoDbPreparedTransactionRequest {
     string;
   readonly tableName:
     string;
+  readonly deletionControlTableName:
+    string;
   readonly componentIds:
     readonly string[];
   readonly transactionRequestDigest:
     string;
+  readonly transactionActionCount:
+    number;
   readonly request:
     Readonly<{
       TransactItems:
-        readonly Readonly<BusinessDeletionDynamoDbDeleteAction>[];
+        readonly Readonly<BusinessDeletionDynamoDbTransactionAction>[];
       ClientRequestToken:
         string;
       ReturnConsumedCapacity:
@@ -173,7 +286,12 @@ function canonicalConfig(
     ) ||
     !DYNAMODB_TABLE_NAME_PATTERN.test(
       config.tableName,
-    )
+    ) ||
+    !DYNAMODB_TABLE_NAME_PATTERN.test(
+      config.deletionControlTableName,
+    ) ||
+    config.tableName ===
+      config.deletionControlTableName
   ) {
     throw new Error(
       "Deletion transaction request configuration is invalid.",
@@ -187,6 +305,176 @@ function canonicalConfig(
       config.awsRegion,
     tableName:
       config.tableName,
+    deletionControlTableName:
+      config.deletionControlTableName,
+  });
+}
+
+function operationConditionCheck(
+  input:
+    Readonly<BusinessDeletionDynamoDbTransactionAdapterInput>,
+  tableName:
+    string,
+): Readonly<BusinessDeletionDynamoDbOperationConditionCheckAction> {
+  const key =
+    businessDeletionControlOperationKey(
+      input.operationId,
+    );
+
+  return Object.freeze({
+    ConditionCheck:
+      Object.freeze({
+        TableName:
+          tableName,
+        Key:
+          Object.freeze({
+            pk:
+              Object.freeze({
+                S:
+                  key.pk,
+              }),
+            sk:
+              Object.freeze({
+                S:
+                  key.sk,
+              }),
+          }),
+        ConditionExpression:
+          "attribute_exists(#pk) AND attribute_exists(#sk) AND #kind = :kind AND #operationId = :operationId AND #manifestIntegrityDigest = :manifestIntegrityDigest AND #state = :state AND #legalHoldVersion = :requiredLegalHoldVersion",
+        ExpressionAttributeNames:
+          Object.freeze({
+            "#pk": "pk" as const,
+            "#sk": "sk" as const,
+            "#kind": "kind" as const,
+            "#operationId":
+              "operationId" as const,
+            "#manifestIntegrityDigest":
+              "manifestIntegrityDigest" as const,
+            "#state": "state" as const,
+            "#legalHoldVersion":
+              "legalHoldVersion" as const,
+          }),
+        ExpressionAttributeValues:
+          Object.freeze({
+            ":kind":
+              Object.freeze({
+                S:
+                  "operation-root" as const,
+              }),
+            ":operationId":
+              Object.freeze({
+                S:
+                  input.operationId,
+              }),
+            ":manifestIntegrityDigest":
+              Object.freeze({
+                S:
+                  input.manifestIntegrityDigest,
+              }),
+            ":state":
+              Object.freeze({
+                S:
+                  "executing" as const,
+              }),
+            ":requiredLegalHoldVersion":
+              Object.freeze({
+                N:
+                  String(
+                    input.requiredLegalHoldVersion,
+                  ),
+              }),
+          }),
+        ReturnValuesOnConditionCheckFailure:
+          "NONE" as const,
+      }),
+  });
+}
+
+function attemptConditionCheck(
+  input:
+    Readonly<BusinessDeletionDynamoDbTransactionAdapterInput>,
+  tableName:
+    string,
+): Readonly<BusinessDeletionDynamoDbAttemptConditionCheckAction> {
+  const key =
+    businessDeletionControlProgressKey(
+      input.operationId,
+      input.stepIndex,
+    );
+
+  return Object.freeze({
+    ConditionCheck:
+      Object.freeze({
+        TableName:
+          tableName,
+        Key:
+          Object.freeze({
+            pk:
+              Object.freeze({
+                S:
+                  key.pk,
+              }),
+            sk:
+              Object.freeze({
+                S:
+                  key.sk,
+              }),
+          }),
+        ConditionExpression:
+          "attribute_exists(#pk) AND attribute_exists(#sk) AND #kind = :kind AND #operationId = :operationId AND #manifestIntegrityDigest = :manifestIntegrityDigest AND #state = :state AND #leaseVersion = :attemptNumber AND #leaseTokenDigest = :attemptTokenDigest",
+        ExpressionAttributeNames:
+          Object.freeze({
+            "#pk": "pk" as const,
+            "#sk": "sk" as const,
+            "#kind": "kind" as const,
+            "#operationId":
+              "operationId" as const,
+            "#manifestIntegrityDigest":
+              "manifestIntegrityDigest" as const,
+            "#state": "state" as const,
+            "#leaseVersion":
+              "leaseVersion" as const,
+            "#leaseTokenDigest":
+              "leaseTokenDigest" as const,
+          }),
+        ExpressionAttributeValues:
+          Object.freeze({
+            ":kind":
+              Object.freeze({
+                S:
+                  "progress" as const,
+              }),
+            ":operationId":
+              Object.freeze({
+                S:
+                  input.operationId,
+              }),
+            ":manifestIntegrityDigest":
+              Object.freeze({
+                S:
+                  input.manifestIntegrityDigest,
+              }),
+            ":state":
+              Object.freeze({
+                S:
+                  "executing" as const,
+              }),
+            ":attemptNumber":
+              Object.freeze({
+                N:
+                  String(
+                    input.attemptNumber,
+                  ),
+              }),
+            ":attemptTokenDigest":
+              Object.freeze({
+                S:
+                  input.attemptTokenDigest,
+              }),
+          }),
+        ReturnValuesOnConditionCheckFailure:
+          "NONE" as const,
+      }),
   });
 }
 
@@ -329,7 +617,7 @@ export class BusinessDeletionDynamoDbTransactionRequestBuilder {
       !Number.isSafeInteger(
         input.stepIndex,
       ) ||
-      input.stepIndex < 0 ||
+      input.stepIndex < 1 ||
       typeof input.stepId !==
         "string" ||
       input.stepId.trim() !==
@@ -345,7 +633,7 @@ export class BusinessDeletionDynamoDbTransactionRequestBuilder {
       !Number.isSafeInteger(
         input.requiredLegalHoldVersion,
       ) ||
-      input.requiredLegalHoldVersion < 0 ||
+      input.requiredLegalHoldVersion < 1 ||
       !Array.isArray(
         input.targets,
       ) ||
@@ -432,7 +720,7 @@ export class BusinessDeletionDynamoDbTransactionRequestBuilder {
       );
     }
 
-    const transactItems =
+    const deleteActions =
       Object.freeze(
         targets.map(
           (target) =>
@@ -443,11 +731,39 @@ export class BusinessDeletionDynamoDbTransactionRequestBuilder {
         ),
       );
 
+    const transactItems:
+      readonly Readonly<BusinessDeletionDynamoDbTransactionAction>[] =
+      Object.freeze([
+        operationConditionCheck(
+          input,
+          this.config.deletionControlTableName,
+        ),
+        attemptConditionCheck(
+          input,
+          this.config.deletionControlTableName,
+        ),
+        ...deleteActions,
+      ]);
+
+    if (
+      transactItems.length !==
+        targets.length +
+          BUSINESS_DELETION_RESERVED_TRANSACTION_ACTIONS ||
+      transactItems.length >
+        DYNAMODB_TRANSACTION_ACTION_LIMIT
+    ) {
+      throw requestError(
+        "the transaction action count is invalid.",
+      );
+    }
+
     return Object.freeze({
       schemaVersion:
         BUSINESS_DELETION_DYNAMODB_TRANSACTION_REQUEST_SCHEMA_VERSION,
       operationId:
         input.operationId,
+      manifestIntegrityDigest:
+        input.manifestIntegrityDigest,
       stepIndex:
         input.stepIndex,
       stepId:
@@ -464,12 +780,16 @@ export class BusinessDeletionDynamoDbTransactionRequestBuilder {
         this.config.awsRegion,
       tableName:
         this.config.tableName,
+      deletionControlTableName:
+        this.config.deletionControlTableName,
       componentIds:
         Object.freeze([
           ...componentIds,
         ]),
       transactionRequestDigest:
         recomputedDigest,
+      transactionActionCount:
+        transactItems.length,
       request:
         Object.freeze({
           TransactItems:

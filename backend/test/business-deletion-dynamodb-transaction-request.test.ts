@@ -78,9 +78,9 @@ function adapterInput(
     manifestIntegrityDigest:
       HASH_A,
     stepIndex:
-      0,
+      1,
     stepId:
-      "dynamodb-step-000",
+      "dynamodb-step-001",
     attemptTokenDigest:
       HASH_B,
     attemptNumber:
@@ -121,6 +121,8 @@ function builder() {
       "us-east-1",
     tableName:
       "business-table",
+    deletionControlTableName:
+      "deletion-control-table",
   });
 }
 
@@ -139,6 +141,14 @@ describe(
           "request-digest-prefix-144-bit",
         itemCondition:
           "exact-generation-or-absent",
+        reservedActions:
+          "operation-and-attempt-condition-checks",
+        operationFence:
+          "executing-exact-manifest-and-legal-hold-version",
+        attemptFence:
+          "executing-exact-manifest-lease-version-and-token",
+        controlTableMutation:
+          false,
         returnValuesOnConditionFailure:
           "NONE",
         awsSdkCommand:
@@ -170,10 +180,12 @@ describe(
           1,
         operationId:
           OPERATION_ID,
+        manifestIntegrityDigest:
+          HASH_A,
         stepIndex:
-          0,
+          1,
         stepId:
-          "dynamodb-step-000",
+          "dynamodb-step-001",
         attemptTokenDigest:
           HASH_B,
         attemptNumber:
@@ -186,12 +198,16 @@ describe(
           "us-east-1",
         tableName:
           "business-table",
+        deletionControlTableName:
+          "deletion-control-table",
         componentIds: [
           "primary_item",
           "derived_item",
         ],
         transactionRequestDigest:
           input.transactionRequestDigest,
+        transactionActionCount:
+          4,
         request: {
           ClientRequestToken:
             input.transactionRequestDigest.slice(
@@ -208,6 +224,120 @@ describe(
       expect(
         prepared.request.TransactItems,
       ).toEqual([
+        {
+          ConditionCheck: {
+            TableName:
+              "deletion-control-table",
+            Key: {
+              pk: {
+                S:
+                  `DEL#OP#${OPERATION_ID}`,
+              },
+              sk: {
+                S:
+                  "ROOT",
+              },
+            },
+            ConditionExpression:
+              "attribute_exists(#pk) AND attribute_exists(#sk) AND #kind = :kind AND #operationId = :operationId AND #manifestIntegrityDigest = :manifestIntegrityDigest AND #state = :state AND #legalHoldVersion = :requiredLegalHoldVersion",
+            ExpressionAttributeNames: {
+              "#pk": "pk",
+              "#sk": "sk",
+              "#kind": "kind",
+              "#operationId":
+                "operationId",
+              "#manifestIntegrityDigest":
+                "manifestIntegrityDigest",
+              "#state": "state",
+              "#legalHoldVersion":
+                "legalHoldVersion",
+            },
+            ExpressionAttributeValues: {
+              ":kind": {
+                S:
+                  "operation-root",
+              },
+              ":operationId": {
+                S:
+                  OPERATION_ID,
+              },
+              ":manifestIntegrityDigest": {
+                S:
+                  HASH_A,
+              },
+              ":state": {
+                S:
+                  "executing",
+              },
+              ":requiredLegalHoldVersion": {
+                N:
+                  "7",
+              },
+            },
+            ReturnValuesOnConditionCheckFailure:
+              "NONE",
+          },
+        },
+        {
+          ConditionCheck: {
+            TableName:
+              "deletion-control-table",
+            Key: {
+              pk: {
+                S:
+                  `DEL#OP#${OPERATION_ID}`,
+              },
+              sk: {
+                S:
+                  "STEP#000001",
+              },
+            },
+            ConditionExpression:
+              "attribute_exists(#pk) AND attribute_exists(#sk) AND #kind = :kind AND #operationId = :operationId AND #manifestIntegrityDigest = :manifestIntegrityDigest AND #state = :state AND #leaseVersion = :attemptNumber AND #leaseTokenDigest = :attemptTokenDigest",
+            ExpressionAttributeNames: {
+              "#pk": "pk",
+              "#sk": "sk",
+              "#kind": "kind",
+              "#operationId":
+                "operationId",
+              "#manifestIntegrityDigest":
+                "manifestIntegrityDigest",
+              "#state": "state",
+              "#leaseVersion":
+                "leaseVersion",
+              "#leaseTokenDigest":
+                "leaseTokenDigest",
+            },
+            ExpressionAttributeValues: {
+              ":kind": {
+                S:
+                  "progress",
+              },
+              ":operationId": {
+                S:
+                  OPERATION_ID,
+              },
+              ":manifestIntegrityDigest": {
+                S:
+                  HASH_A,
+              },
+              ":state": {
+                S:
+                  "executing",
+              },
+              ":attemptNumber": {
+                N:
+                  "1",
+              },
+              ":attemptTokenDigest": {
+                S:
+                  HASH_B,
+              },
+            },
+            ReturnValuesOnConditionCheckFailure:
+              "NONE",
+          },
+        },
         {
           Delete: {
             TableName:
@@ -281,6 +411,22 @@ describe(
           adapterInput(),
         );
 
+      const operationCheck =
+        prepared.request.TransactItems[0];
+      const firstDelete =
+        prepared.request.TransactItems[2];
+
+      if (
+        !operationCheck ||
+        !("ConditionCheck" in operationCheck) ||
+        !firstDelete ||
+        !("Delete" in firstDelete)
+      ) {
+        throw new Error(
+          "Expected control checks before delete actions.",
+        );
+      }
+
       expect(
         Object.isFrozen(
           prepared,
@@ -307,7 +453,14 @@ describe(
 
       expect(
         Object.isFrozen(
-          prepared.request.TransactItems[0]?.Delete.Key.pk,
+          operationCheck.ConditionCheck
+            .Key.pk,
+        ),
+      ).toBe(true);
+
+      expect(
+        Object.isFrozen(
+          firstDelete.Delete.Key.pk,
         ),
       ).toBe(true);
     });
@@ -365,6 +518,33 @@ describe(
       ).toThrow(
         "transaction request digest does not match",
       );
+    });
+
+    it("rejects zero-based control-record versions and step indexes", () => {
+      for (
+        const overrides of
+        [
+          {
+            stepIndex:
+              0,
+          },
+          {
+            requiredLegalHoldVersion:
+              0,
+          },
+        ]
+      ) {
+        expect(
+          () =>
+            builder().build(
+              adapterInput(
+                overrides,
+              ),
+            ),
+        ).toThrow(
+          "adapter input is invalid",
+        );
+      }
     });
 
     it("binds each target to the configured AWS account, Region, and table role", () => {
@@ -530,7 +710,11 @@ describe(
 
       expect(
         prepared.request.TransactItems,
-      ).toHaveLength(98);
+      ).toHaveLength(100);
+
+      expect(
+        prepared.transactionActionCount,
+      ).toBe(100);
     });
 
     it("rejects 99 business deletes to preserve the two reserved transaction actions", () => {
@@ -583,6 +767,8 @@ describe(
               "us-east-1",
             tableName:
               "business-table",
+            deletionControlTableName:
+              "deletion-control-table",
           },
           {
             awsAccountId:
@@ -591,6 +777,8 @@ describe(
               " us-east-1",
             tableName:
               "business-table",
+            deletionControlTableName:
+              "deletion-control-table",
           },
           {
             awsAccountId:
@@ -599,6 +787,28 @@ describe(
               "us-east-1",
             tableName:
               "bad table",
+            deletionControlTableName:
+              "deletion-control-table",
+          },
+          {
+            awsAccountId:
+              "123456789012",
+            awsRegion:
+              "us-east-1",
+            tableName:
+              "business-table",
+            deletionControlTableName:
+              "bad table",
+          },
+          {
+            awsAccountId:
+              "123456789012",
+            awsRegion:
+              "us-east-1",
+            tableName:
+              "business-table",
+            deletionControlTableName:
+              "business-table",
           },
         ]
       ) {
