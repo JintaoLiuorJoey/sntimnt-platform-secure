@@ -354,7 +354,7 @@ function canonicalVerifiedAt(
   return value;
 }
 
-function transactionRequestDigest(
+export function businessDeletionDynamoDbTransactionRequestDigest(
   input:
     Omit<
       BusinessDeletionDynamoDbTransactionAdapterInput,
@@ -1025,7 +1025,7 @@ export function createManifestBoundBusinessDeletionExecutionPort(
                 .requiredLegalHoldVersion,
             targets,
             transactionRequestDigest:
-              transactionRequestDigest({
+              businessDeletionDynamoDbTransactionRequestDigest({
                 operationId:
                   boundManifest.operationId,
                 manifestIntegrityDigest:
