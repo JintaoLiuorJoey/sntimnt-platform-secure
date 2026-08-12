@@ -53,6 +53,7 @@ export type AuthTableRecord = OAuthTransactionRecord | SessionRecord | RateLimit
 
 export interface PublicSession {
   user: AuthenticatedUser;
+  adminMfaConfiguration: AdminMfaConfigurationDecision;
   expiresAt: string;
   refreshAfter?: string;
 }

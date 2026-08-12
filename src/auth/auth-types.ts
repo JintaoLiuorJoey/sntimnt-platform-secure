@@ -2,6 +2,12 @@ import { z } from "zod";
 
 export const userRoleSchema = z.enum(["investor", "admin", "operations"]);
 
+export const adminMfaConfigurationSchema = z.enum([
+  "not-required",
+  "enrollment-required",
+  "configured",
+]);
+
 export const authenticatedUserSchema = z.object({
   id: z.string().min(1),
   email: z.string().email(),
@@ -11,11 +17,15 @@ export const authenticatedUserSchema = z.object({
 
 export const authSessionSchema = z.object({
   user: authenticatedUserSchema,
+  adminMfaConfiguration: adminMfaConfigurationSchema,
   expiresAt: z.string().datetime({ offset: true }),
   refreshAfter: z.string().datetime({ offset: true }).optional(),
 });
 
 export type UserRole = z.infer<typeof userRoleSchema>;
+export type AdminMfaConfiguration = z.infer<
+  typeof adminMfaConfigurationSchema
+>;
 export type AuthenticatedUser = z.infer<typeof authenticatedUserSchema>;
 export type AuthSession = z.infer<typeof authSessionSchema>;
 export type AuthStatus = "loading" | "authenticated" | "anonymous" | "error";

@@ -1,10 +1,15 @@
-import { render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/auth/auth-context";
 import type { AuthSession, AuthStatus, UserRole } from "@/auth/auth-types";
 import { ProtectedRoute } from "@/auth/guards/ProtectedRoute";
 import { RoleRoute } from "@/auth/guards/RoleRoute";
+import { AdminMfaRoute } from "@/auth/guards/AdminMfaRoute";
+import type { AdminMfaConfiguration } from "@/auth/auth-types";
+
+afterEach(cleanup);
 
 const baseSession: AuthSession = {
   user: {
@@ -13,15 +18,23 @@ const baseSession: AuthSession = {
     displayName: "Test Investor",
     roles: ["investor"],
   },
+  adminMfaConfiguration: "not-required",
   expiresAt: "2030-01-01T00:00:00.000Z",
 };
 
-function authValue(status: AuthStatus, roles: UserRole[] = []): AuthContextValue {
+function authValue(
+  status: AuthStatus,
+  roles: UserRole[] = [],
+  adminMfaConfiguration: AdminMfaConfiguration = roles.includes("admin")
+    ? "configured"
+    : "not-required",
+): AuthContextValue {
   const session =
     status === "authenticated"
       ? {
           ...baseSession,
           user: { ...baseSession.user, roles },
+          adminMfaConfiguration,
         }
       : null;
 
@@ -61,10 +74,13 @@ function renderRoutes(value: AuthContextValue, initialEntry: string) {
           <Route path="/unauthorized" element={<><div>401 page</div><CurrentLocation /></>} />
           <Route path="/forbidden" element={<><div>403 page</div><CurrentLocation /></>} />
           <Route element={<ProtectedRoute />}>
-            <Route path="/dashboard" element={<div>Dashboard page</div>} />
-            <Route path="/profile" element={<div>Profile page</div>} />
-            <Route element={<RoleRoute allowedRoles={["admin"]} />}>
-              <Route path="/admin" element={<div>Admin page</div>} />
+            <Route element={<AdminMfaRoute />}>
+              <Route path="/mfa/enroll" element={<div>MFA enrollment page</div>} />
+              <Route path="/dashboard" element={<div>Dashboard page</div>} />
+              <Route path="/profile" element={<div>Profile page</div>} />
+              <Route element={<RoleRoute allowedRoles={["admin"]} />}>
+                <Route path="/admin" element={<div>Admin page</div>} />
+              </Route>
             </Route>
           </Route>
         </Routes>
@@ -116,5 +132,23 @@ describe("route authorization", () => {
   it("allows an administrator to access admin routes", () => {
     renderRoutes(authValue("authenticated", ["admin"]), "/admin");
     expect(screen.getByText("Admin page")).toBeInTheDocument();
+  });
+
+  it("forces an administrator with pending MFA enrollment to the setup page", () => {
+    renderRoutes(
+      authValue("authenticated", ["admin"], "enrollment-required"),
+      "/admin?section=operations#queue",
+    );
+    expect(screen.getByText("MFA enrollment page")).toBeInTheDocument();
+  });
+
+  it("keeps a configured administrator out of the enrollment page", () => {
+    renderRoutes(authValue("authenticated", ["admin"], "configured"), "/mfa/enroll");
+    expect(screen.getByText("Admin page")).toBeInTheDocument();
+  });
+
+  it("keeps non-administrators out of the enrollment page", () => {
+    renderRoutes(authValue("authenticated", ["investor"]), "/mfa/enroll");
+    expect(screen.getByText("403 page")).toBeInTheDocument();
   });
 });

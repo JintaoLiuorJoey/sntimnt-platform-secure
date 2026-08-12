@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/auth/AuthProvider";
 import { ProtectedRoute } from "@/auth/guards/ProtectedRoute";
 import { RoleRoute } from "@/auth/guards/RoleRoute";
+import { AdminMfaRoute } from "@/auth/guards/AdminMfaRoute";
 import DemoModeBanner from "@/demo-entry";
 import Index from "./pages/Index.tsx";
 import Login from "./pages/Login.tsx";
@@ -20,6 +21,7 @@ import Admin from "./pages/Admin.tsx";
 import AdminInvestor from "./pages/AdminInvestor.tsx";
 import Unauthorized from "./pages/auth/Unauthorized.tsx";
 import Forbidden from "./pages/auth/Forbidden.tsx";
+import MfaEnrollment from "./pages/auth/MfaEnrollment.tsx";
 import Terms from "./pages/Terms.tsx";
 import Privacy from "./pages/Privacy.tsx";
 import NotFound from "./pages/NotFound.tsx";
@@ -51,15 +53,18 @@ const App = () => (
             <Route path="/403" element={<Forbidden />} />
 
             <Route element={<ProtectedRoute />}>
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/performance" element={<Performance />} />
-              <Route path="/signals" element={<SignalLog />} />
-              <Route path="/signal-log" element={<SignalLog />} />
-              <Route path="/profile" element={<Profile />} />
+              <Route element={<AdminMfaRoute />}>
+                <Route path="/mfa/enroll" element={<MfaEnrollment />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/performance" element={<Performance />} />
+                <Route path="/signals" element={<SignalLog />} />
+                <Route path="/signal-log" element={<SignalLog />} />
+                <Route path="/profile" element={<Profile />} />
 
-              <Route element={<RoleRoute allowedRoles={["admin"]} />}>
-                <Route path="/admin" element={<Admin />} />
-                <Route path="/admin/investors/:investorId" element={<AdminInvestor />} />
+                <Route element={<RoleRoute allowedRoles={["admin"]} />}>
+                  <Route path="/admin" element={<Admin />} />
+                  <Route path="/admin/investors/:investorId" element={<AdminInvestor />} />
+                </Route>
               </Route>
             </Route>
 

@@ -196,6 +196,7 @@ export function publicSession(record: SessionRecord, now: number): PublicSession
 
   return {
     user: record.user,
+    adminMfaConfiguration: record.adminMfaConfiguration,
     expiresAt: new Date(expiresAt * 1000).toISOString(),
     ...(refreshAt > now + 5
       ? { refreshAfter: new Date(refreshAt * 1000).toISOString() }
