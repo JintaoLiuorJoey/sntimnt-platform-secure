@@ -18,6 +18,10 @@ export function totpEnrollmentDecision(
     return "forbidden";
   }
 
+  if (record.adminMfaConfiguration !== "enrollment-required") {
+    return "forbidden";
+  }
+
   if (
     !hasRecentAuthentication(
       record,

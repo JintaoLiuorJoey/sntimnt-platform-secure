@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { endSession, renewSession } from "@/auth/session-api";
+import {
+  completeTotpEnrollment,
+  endSession,
+  renewSession,
+  startTotpEnrollment,
+} from "@/auth/session-api";
 
 const fetchMock = vi.hoisted(() => vi.fn());
 
@@ -19,6 +24,7 @@ const sessionResponse = {
     displayName: "Test Investor",
     roles: ["investor"],
   },
+  adminMfaConfiguration: "not-required",
   expiresAt: "2030-01-01T00:00:00.000Z",
   refreshAfter: "2029-12-31T23:30:00.000Z",
 };
@@ -26,7 +32,7 @@ const sessionResponse = {
 describe("session API", () => {
   beforeEach(() => {
     fetchMock.mockReset();
-    document.cookie = "sntimnt_csrf=csrf-test; Path=/";
+    vi.stubGlobal("document", { cookie: "sntimnt_csrf=csrf-test" });
   });
 
   it("ends the server session with an authenticated CSRF-protected POST request", async () => {
@@ -61,5 +67,46 @@ describe("session API", () => {
         headers: expect.objectContaining({ "X-CSRF-Token": "csrf-test" }),
       }),
     );
+  });
+
+  it("starts TOTP enrollment with credentials and CSRF proof", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ secretCode: "JBSWY3DPEHPK3PXP" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(startTotpEnrollment()).resolves.toBe("JBSWY3DPEHPK3PXP");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.invalid/api/auth/mfa/totp/start",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        headers: expect.objectContaining({ "X-CSRF-Token": "csrf-test" }),
+      }),
+    );
+  });
+
+  it("completes TOTP enrollment with only the six-digit user code", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+    await expect(completeTotpEnrollment("123456")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.invalid/api/auth/mfa/totp/complete",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ userCode: "123456" }),
+        headers: expect.objectContaining({ "X-CSRF-Token": "csrf-test" }),
+      }),
+    );
+  });
+
+  it("rejects an invalid verification code before making a request", async () => {
+    await expect(completeTotpEnrollment("12 3456")).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

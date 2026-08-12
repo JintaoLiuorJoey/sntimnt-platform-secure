@@ -2350,12 +2350,14 @@ describe(
         "enrollment-required",
       );
 
+
       expect(
         responseBody(
           response,
         ),
-      ).not.toHaveProperty(
+      ).toHaveProperty(
         "adminMfaConfiguration",
+        "enrollment-required",
       );
     });
 
@@ -2716,6 +2718,7 @@ describe(
         ),
       ).toEqual({
         user: adminUser,
+        adminMfaConfiguration: "enrollment-required",
         expiresAt:
           new Date(
             (NOW + 1_800) *
@@ -2730,8 +2733,8 @@ describe(
 
       expect(
         response.body,
-      ).not.toContain(
-        "adminMfaConfiguration",
+      ).toContain(
+        '"adminMfaConfiguration":"enrollment-required"',
       );
 
       expect(

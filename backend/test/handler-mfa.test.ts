@@ -314,6 +314,20 @@ describe("TOTP enrollment HTTP boundary", () => {
     },
   );
 
+  it("rejects enrollment when administrator MFA is already configured", async () => {
+    runtime.store.getSession.mockResolvedValue(
+      session({ adminMfaConfiguration: "configured" }),
+    );
+
+    const response = await invokeHandler(event(startPath), context);
+
+    expect(response.statusCode).toBe(403);
+    expect(responseBody(response)).toEqual({
+      message: "The requested operation is not permitted.",
+    });
+    expect(runtime.cipher.decrypt).not.toHaveBeenCalled();
+  });
+
   it("requires recent authentication at the handler boundary", async () => {
     runtime.store.getSession.mockResolvedValue(
       session({

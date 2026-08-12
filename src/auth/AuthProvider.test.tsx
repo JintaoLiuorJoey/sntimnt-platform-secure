@@ -21,6 +21,7 @@ const activeSession: AuthSession = {
     displayName: "Test Investor",
     roles: ["investor"],
   },
+  adminMfaConfiguration: "not-required",
   expiresAt: "2030-01-01T00:00:01.000Z",
 };
 

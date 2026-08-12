@@ -8,6 +8,7 @@ const validSession = {
     displayName: "Example Investor",
     roles: ["investor"],
   },
+  adminMfaConfiguration: "not-required",
   expiresAt: "2030-01-01T00:00:00.000Z",
 };
 
@@ -32,5 +33,14 @@ describe("authSessionSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("requires a recognized administrator MFA decision", () => {
+    expect(
+      authSessionSchema.safeParse({
+        ...validSession,
+        adminMfaConfiguration: "unknown",
+      }).success,
+    ).toBe(false);
   });
 });
